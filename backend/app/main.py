@@ -63,6 +63,7 @@ def query_documents(request: QueryRequest) -> QueryResponse:
 
     return QueryResponse(
         question=request.question,
+        retrieval_mode=store.active_retrieval_mode,
         answer=answer,
         sources=[
             SourceChunk(

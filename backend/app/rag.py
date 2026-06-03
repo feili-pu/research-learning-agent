@@ -3,9 +3,15 @@ from pathlib import Path
 from uuid import uuid4
 import re
 
+import numpy as np
 from pypdf import PdfReader
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+
+try:
+    from sentence_transformers import SentenceTransformer
+except ImportError:
+    SentenceTransformer = None
 
 
 @dataclass
@@ -32,13 +38,23 @@ class SearchResult:
 
 
 class RagStore:
-    def __init__(self, upload_dir: Path) -> None:
+    def __init__(
+        self,
+        upload_dir: Path,
+        retrieval_mode: str = "semantic",
+        embedding_model_name: str = "BAAI/bge-small-zh-v1.5",
+    ) -> None:
         self.upload_dir = upload_dir
         self.upload_dir.mkdir(parents=True, exist_ok=True)
         self.documents: dict[str, Document] = {}
         self.chunks: list[Chunk] = []
+        self.retrieval_mode = retrieval_mode
+        self.active_retrieval_mode = "tfidf"
+        self.embedding_model_name = embedding_model_name
+        self.embedding_model = None
+        self.embedding_matrix = None
         self.vectorizer = TfidfVectorizer()
-        self.matrix = None
+        self.tfidf_matrix = None
 
     def ingest_pdf(self, filename: str, content: bytes) -> Document:
         safe_name = self._safe_filename(filename)
@@ -65,11 +81,16 @@ class RagStore:
         return list(self.documents.values())
 
     def search(self, question: str, top_k: int) -> list[SearchResult]:
-        if not self.chunks or self.matrix is None:
+        if not self.chunks:
             return []
 
-        query_vector = self.vectorizer.transform([question])
-        scores = cosine_similarity(query_vector, self.matrix)[0]
+        if self.active_retrieval_mode == "semantic" and self.embedding_matrix is not None:
+            scores = self._semantic_scores(question)
+        elif self.tfidf_matrix is not None:
+            scores = self._tfidf_scores(question)
+        else:
+            return []
+
         ranked_indexes = scores.argsort()[::-1][:top_k]
 
         return [
@@ -92,14 +113,46 @@ class RagStore:
 
         joined = "\n".join(excerpts)
         return (
-            "V1 uses retrieval-only answering, so this is a grounded draft from the most relevant chunks.\n\n"
+            "V2 uses retrieval-only answering, so this is a grounded draft from the most relevant chunks.\n\n"
             f"Question: {question}\n\n"
             f"Relevant evidence:\n{joined}"
         )
 
     def _rebuild_index(self) -> None:
         texts = [chunk.text for chunk in self.chunks]
-        self.matrix = self.vectorizer.fit_transform(texts) if texts else None
+        self.tfidf_matrix = self.vectorizer.fit_transform(texts) if texts else None
+        self.embedding_matrix = None
+        self.active_retrieval_mode = "tfidf"
+
+        if texts and self.retrieval_mode == "semantic":
+            self.embedding_matrix = self._build_embedding_matrix(texts)
+            if self.embedding_matrix is not None:
+                self.active_retrieval_mode = "semantic"
+
+    def _build_embedding_matrix(self, texts: list[str]):
+        if SentenceTransformer is None:
+            return None
+
+        if self.embedding_model is None:
+            self.embedding_model = SentenceTransformer(self.embedding_model_name)
+
+        return self.embedding_model.encode(
+            texts,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+
+    def _semantic_scores(self, question: str):
+        query_embedding = self.embedding_model.encode(
+            [question],
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )[0]
+        return np.matmul(self.embedding_matrix, query_embedding)
+
+    def _tfidf_scores(self, question: str):
+        query_vector = self.vectorizer.transform([question])
+        return cosine_similarity(query_vector, self.tfidf_matrix)[0]
 
     def _extract_pdf_pages(self, pdf_path: Path) -> list[str]:
         reader = PdfReader(str(pdf_path))
@@ -157,4 +210,3 @@ class RagStore:
         if len(text) <= max_chars:
             return text
         return text[: max_chars - 3].rstrip() + "..."
-

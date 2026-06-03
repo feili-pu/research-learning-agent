@@ -5,5 +5,5 @@ pydantic
 pypdf
 scikit-learn
 numpy
+sentence-transformers
 pytest
-

@@ -24,6 +24,7 @@ class SourceChunk(BaseModel):
 
 class QueryResponse(BaseModel):
     question: str
+    retrieval_mode: str
     answer: str
     sources: list[SourceChunk]
 
@@ -33,4 +34,3 @@ class DocumentSummary(BaseModel):
     filename: str
     pages: int
     chunks: int
-

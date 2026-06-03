@@ -2,17 +2,37 @@
 
 A small RAG project for learning from papers, course PDFs, and open-source project notes.
 
-## V1 Goal
+## Current Goal
 
-V1 focuses on a local PDF question-answering workflow:
+The current version focuses on a local PDF question-answering workflow:
 
 1. Upload a PDF.
 2. Extract text from the PDF.
 3. Split the text into chunks.
-4. Build a simple local retrieval index.
+4. Build a local semantic retrieval index.
 5. Ask questions and return answers with source chunks.
 
-V1 is intentionally retrieval-only. It does not call an LLM yet. The answer is a grounded draft made from retrieved chunks, which helps us verify the data pipeline before adding Agent and generation logic.
+The project is still intentionally retrieval-only. It does not call an LLM yet. The answer is a grounded draft made from retrieved chunks, which helps us verify the data pipeline before adding Agent and generation logic.
+
+## Version Notes
+
+### V1
+
+V1 used `TF-IDF + cosine similarity`.
+
+This made the first version fast and easy to understand, but it mostly matched keywords.
+
+### V2
+
+V2 uses `sentence-transformers` semantic embeddings by default.
+
+The default embedding model is:
+
+```text
+BAAI/bge-small-zh-v1.5
+```
+
+This model is better for Chinese learning materials and can also handle English technical text. If semantic embedding is unavailable, the app falls back to TF-IDF retrieval.
 
 ## Project Structure
 
@@ -94,15 +114,16 @@ Example JSON body:
 PDF upload
   -> pypdf extracts text
   -> text is split into overlapping chunks
-  -> TF-IDF builds a local vector index
-  -> query retrieves the most relevant chunks
+  -> sentence-transformers encodes chunks into vectors
+  -> query is encoded into a vector
+  -> cosine-like vector similarity retrieves relevant chunks
   -> API returns a grounded draft answer with sources
 ```
 
 ## Next Milestones
 
-1. Replace TF-IDF retrieval with semantic embeddings.
-2. Add persistent vector storage.
-3. Add an LLM answer generator with citations.
-4. Add Agent tools for arXiv and GitHub.
-5. Add a frontend.
+1. Add persistent vector storage.
+2. Add an LLM answer generator with citations.
+3. Add Agent tools for arXiv and GitHub.
+4. Add a frontend.
+5. Add evaluation data for retrieval quality.

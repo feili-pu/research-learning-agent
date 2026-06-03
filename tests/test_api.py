@@ -48,7 +48,7 @@ def test_health_check() -> None:
 
 
 def test_upload_and_query_pdf(tmp_path: Path) -> None:
-    main.store = RagStore(upload_dir=tmp_path)
+    main.store = RagStore(upload_dir=tmp_path, retrieval_mode="tfidf")
     client = TestClient(main.app)
     pdf_bytes = make_pdf_with_text(
         "Retrieval augmented generation uses search to ground answers in documents."
@@ -66,4 +66,18 @@ def test_upload_and_query_pdf(tmp_path: Path) -> None:
     assert upload_response.status_code == 200
     assert upload_response.json()["chunks"] >= 1
     assert query_response.status_code == 200
+    assert query_response.json()["retrieval_mode"] == "tfidf"
     assert query_response.json()["sources"]
+
+
+def test_semantic_store_can_build_index(tmp_path: Path) -> None:
+    store = RagStore(upload_dir=tmp_path, retrieval_mode="semantic")
+    pdf_bytes = make_pdf_with_text(
+        "Retrieval augmented generation grounds model answers with search results."
+    )
+
+    store.ingest_pdf("semantic.pdf", pdf_bytes)
+    results = store.search("How does RAG use search?", top_k=1)
+
+    assert store.active_retrieval_mode == "semantic"
+    assert results
