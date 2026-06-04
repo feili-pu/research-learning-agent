@@ -2,6 +2,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from backend.app.answerer import Answerer
 from backend.app import main
 from backend.app.rag import RagStore
 
@@ -47,8 +48,10 @@ def test_health_check() -> None:
     assert response.json() == {"status": "ok"}
 
 
-def test_upload_and_query_pdf(tmp_path: Path) -> None:
+def test_upload_and_query_pdf(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     main.store = RagStore(upload_dir=tmp_path, retrieval_mode="tfidf")
+    main.answerer = Answerer()
     client = TestClient(main.app)
     pdf_bytes = make_pdf_with_text(
         "Retrieval augmented generation uses search to ground answers in documents."
@@ -67,6 +70,8 @@ def test_upload_and_query_pdf(tmp_path: Path) -> None:
     assert upload_response.json()["chunks"] >= 1
     assert query_response.status_code == 200
     assert query_response.json()["retrieval_mode"] == "tfidf"
+    assert query_response.json()["answer_mode"] == "retrieval_only"
+    assert query_response.json()["model"] is None
     assert query_response.json()["sources"]
 
 
@@ -81,3 +86,41 @@ def test_semantic_store_can_build_index(tmp_path: Path) -> None:
 
     assert store.active_retrieval_mode == "semantic"
     assert results
+
+
+def test_answerer_returns_retrieval_only_without_api_key(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    store = RagStore(upload_dir=tmp_path, retrieval_mode="tfidf")
+    pdf_bytes = make_pdf_with_text("RAG answers should cite retrieved source chunks.")
+    store.ingest_pdf("answer.pdf", pdf_bytes)
+    results = store.search("What should RAG cite?", top_k=1)
+
+    answer = Answerer().answer("What should RAG cite?", results)
+
+    assert answer.answer_mode == "retrieval_only"
+    assert answer.model is None
+    assert "Sources:" in answer.answer
+
+
+def test_answerer_falls_back_when_llm_fails(monkeypatch, tmp_path: Path) -> None:
+    class BrokenResponses:
+        def create(self, **kwargs):
+            raise RuntimeError("fake failure")
+
+    class BrokenClient:
+        responses = BrokenResponses()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    store = RagStore(upload_dir=tmp_path, retrieval_mode="tfidf")
+    pdf_bytes = make_pdf_with_text("The answer must stay grounded in retrieved chunks.")
+    store.ingest_pdf("fallback.pdf", pdf_bytes)
+    results = store.search("Where should the answer stay grounded?", top_k=1)
+    answerer = Answerer()
+    answerer.client = BrokenClient()
+
+    answer = answerer.answer("Where should the answer stay grounded?", results)
+
+    assert answer.answer_mode == "llm_error_fallback"
+    assert answer.model is None
+    assert "Error type: RuntimeError" in answer.answer
+    assert "Sources:" in answer.answer

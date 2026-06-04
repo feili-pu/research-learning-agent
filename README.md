@@ -34,6 +34,14 @@ BAAI/bge-small-zh-v1.5
 
 This model is better for Chinese learning materials and can also handle English technical text. If semantic embedding is unavailable, the app falls back to TF-IDF retrieval.
 
+### V3
+
+V3 adds optional LLM answer generation.
+
+If `OPENAI_API_KEY` is configured, `/query` sends the retrieved chunks to an LLM and asks it to answer with source citations like `[1]`.
+
+If `OPENAI_API_KEY` is not configured, the app still works locally and returns a retrieval-only answer with the most relevant source chunks.
+
 ## Project Structure
 
 ```text
@@ -56,6 +64,15 @@ Install or refresh the V1 dependencies:
 ```powershell
 conda run -n graph-rag python -m pip install -r requirements.txt
 ```
+
+Optional LLM configuration:
+
+```powershell
+$env:OPENAI_API_KEY="your-api-key"
+$env:RLA_LLM_MODEL="gpt-4o-mini"
+```
+
+`RLA_LLM_MODEL` is optional. If it is not set, the app uses `gpt-4o-mini`.
 
 ## Run The API
 
@@ -108,6 +125,14 @@ Example JSON body:
 }
 ```
 
+The response includes:
+
+```text
+retrieval_mode: semantic or tfidf
+answer_mode: llm, retrieval_only, or no_sources
+model: the LLM model name, or null when no LLM is used
+```
+
 ## How V1 Works
 
 ```text
@@ -117,13 +142,14 @@ PDF upload
   -> sentence-transformers encodes chunks into vectors
   -> query is encoded into a vector
   -> cosine-like vector similarity retrieves relevant chunks
-  -> API returns a grounded draft answer with sources
+  -> optional LLM generates a cited answer
+  -> API returns the answer and source chunks
 ```
 
 ## Next Milestones
 
 1. Add persistent vector storage.
-2. Add an LLM answer generator with citations.
-3. Add Agent tools for arXiv and GitHub.
-4. Add a frontend.
-5. Add evaluation data for retrieval quality.
+2. Add Agent tools for arXiv and GitHub.
+3. Add a frontend.
+4. Add evaluation data for retrieval quality.
+5. Add Docker deployment.

@@ -25,6 +25,8 @@ class SourceChunk(BaseModel):
 class QueryResponse(BaseModel):
     question: str
     retrieval_mode: str
+    answer_mode: str
+    model: str | None
     answer: str
     sources: list[SourceChunk]
 

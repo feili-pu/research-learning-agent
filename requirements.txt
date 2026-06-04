@@ -6,4 +6,5 @@ pypdf
 scikit-learn
 numpy
 sentence-transformers
+openai
 pytest

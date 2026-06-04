@@ -2,6 +2,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 
+from .answerer import Answerer
 from .rag import RagStore
 from .schemas import (
     DocumentIngestResponse,
@@ -13,11 +14,12 @@ from .schemas import (
 
 app = FastAPI(
     title="Research Learning Agent",
-    description="V1 local RAG API for learning from uploaded PDFs.",
-    version="0.1.0",
+    description="Local RAG API for learning from uploaded PDFs.",
+    version="0.3.0",
 )
 
 store = RagStore(upload_dir=Path("data/uploads"))
+answerer = Answerer()
 
 
 @app.get("/health")
@@ -59,12 +61,14 @@ def list_documents() -> list[DocumentSummary]:
 @app.post("/query", response_model=QueryResponse)
 def query_documents(request: QueryRequest) -> QueryResponse:
     results = store.search(request.question, request.top_k)
-    answer = store.draft_answer(request.question, results)
+    answer = answerer.answer(request.question, results)
 
     return QueryResponse(
         question=request.question,
         retrieval_mode=store.active_retrieval_mode,
-        answer=answer,
+        answer_mode=answer.answer_mode,
+        model=answer.model,
+        answer=answer.answer,
         sources=[
             SourceChunk(
                 document_id=result.chunk.document_id,

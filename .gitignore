@@ -9,4 +9,4 @@ __pycache__/
 data/uploads/*
 !data/uploads/.gitkeep
 data/index/
-
+output/
