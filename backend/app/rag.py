@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from uuid import uuid4
 import re
@@ -41,11 +42,15 @@ class RagStore:
     def __init__(
         self,
         upload_dir: Path,
+        index_dir: Path = Path("data/index"),
         retrieval_mode: str = "semantic",
         embedding_model_name: str = "BAAI/bge-small-zh-v1.5",
     ) -> None:
         self.upload_dir = upload_dir
         self.upload_dir.mkdir(parents=True, exist_ok=True)
+        self.index_dir = index_dir
+        self.index_dir.mkdir(parents=True, exist_ok=True)
+        self.store_path = self.index_dir / "rag_store.json"
         self.documents: dict[str, Document] = {}
         self.chunks: list[Chunk] = []
         self.retrieval_mode = retrieval_mode
@@ -55,6 +60,8 @@ class RagStore:
         self.embedding_matrix = None
         self.vectorizer = TfidfVectorizer()
         self.tfidf_matrix = None
+        self._load_store()
+        self._rebuild_index()
 
     def ingest_pdf(self, filename: str, content: bytes) -> Document:
         safe_name = self._safe_filename(filename)
@@ -74,11 +81,32 @@ class RagStore:
 
         self.documents[document_id] = document
         self.chunks.extend(new_chunks)
+        self._save_store()
         self._rebuild_index()
         return document
 
     def list_documents(self) -> list[Document]:
         return list(self.documents.values())
+
+    def reindex_uploads(self) -> list[Document]:
+        self.documents = {}
+        self.chunks = []
+
+        for pdf_path in sorted(self.upload_dir.glob("*.pdf")):
+            document_id, filename = self._document_info_from_path(pdf_path)
+            pages = self._extract_pdf_pages(pdf_path)
+            new_chunks = self._chunk_pages(document_id, filename, pages)
+            self.documents[document_id] = Document(
+                document_id=document_id,
+                filename=filename,
+                pages=len(pages),
+                chunks=len(new_chunks),
+            )
+            self.chunks.extend(new_chunks)
+
+        self._save_store()
+        self._rebuild_index()
+        return self.list_documents()
 
     def search(self, question: str, top_k: int) -> list[SearchResult]:
         if not self.chunks:
@@ -154,6 +182,44 @@ class RagStore:
         query_vector = self.vectorizer.transform([question])
         return cosine_similarity(query_vector, self.tfidf_matrix)[0]
 
+    def _load_store(self) -> None:
+        if not self.store_path.exists():
+            return
+
+        data = json.loads(self.store_path.read_text(encoding="utf-8"))
+        self.documents = {
+            item["document_id"]: Document(**item)
+            for item in data.get("documents", [])
+        }
+        self.chunks = [Chunk(**item) for item in data.get("chunks", [])]
+
+    def _save_store(self) -> None:
+        data = {
+            "documents": [
+                {
+                    "document_id": document.document_id,
+                    "filename": document.filename,
+                    "pages": document.pages,
+                    "chunks": document.chunks,
+                }
+                for document in self.documents.values()
+            ],
+            "chunks": [
+                {
+                    "document_id": chunk.document_id,
+                    "filename": chunk.filename,
+                    "page": chunk.page,
+                    "chunk_id": chunk.chunk_id,
+                    "text": chunk.text,
+                }
+                for chunk in self.chunks
+            ],
+        }
+        self.store_path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
     def _extract_pdf_pages(self, pdf_path: Path) -> list[str]:
         reader = PdfReader(str(pdf_path))
         pages = []
@@ -202,6 +268,13 @@ class RagStore:
         name = Path(filename).name.strip() or "document.pdf"
         name = re.sub(r"[^A-Za-z0-9._-]+", "-", name)
         return name if name.lower().endswith(".pdf") else f"{name}.pdf"
+
+    def _document_info_from_path(self, pdf_path: Path) -> tuple[str, str]:
+        name = pdf_path.name
+        match = re.match(r"^([a-f0-9]{32})-(.+)$", name)
+        if match:
+            return match.group(1), match.group(2)
+        return uuid4().hex, self._safe_filename(name)
 
     def _normalize_text(self, text: str) -> str:
         return re.sub(r"\s+", " ", text).strip()

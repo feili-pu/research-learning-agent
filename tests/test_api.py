@@ -50,7 +50,7 @@ def test_health_check() -> None:
 
 def test_upload_and_query_pdf(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    main.store = RagStore(upload_dir=tmp_path, retrieval_mode="tfidf")
+    main.store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
     main.answerer = Answerer()
     client = TestClient(main.app)
     pdf_bytes = make_pdf_with_text(
@@ -76,7 +76,7 @@ def test_upload_and_query_pdf(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_semantic_store_can_build_index(tmp_path: Path) -> None:
-    store = RagStore(upload_dir=tmp_path, retrieval_mode="semantic")
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="semantic")
     pdf_bytes = make_pdf_with_text(
         "Retrieval augmented generation grounds model answers with search results."
     )
@@ -90,7 +90,7 @@ def test_semantic_store_can_build_index(tmp_path: Path) -> None:
 
 def test_answerer_returns_retrieval_only_without_api_key(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    store = RagStore(upload_dir=tmp_path, retrieval_mode="tfidf")
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
     pdf_bytes = make_pdf_with_text("RAG answers should cite retrieved source chunks.")
     store.ingest_pdf("answer.pdf", pdf_bytes)
     results = store.search("What should RAG cite?", top_k=1)
@@ -111,7 +111,7 @@ def test_answerer_falls_back_when_llm_fails(monkeypatch, tmp_path: Path) -> None
         responses = BrokenResponses()
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    store = RagStore(upload_dir=tmp_path, retrieval_mode="tfidf")
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
     pdf_bytes = make_pdf_with_text("The answer must stay grounded in retrieved chunks.")
     store.ingest_pdf("fallback.pdf", pdf_bytes)
     results = store.search("Where should the answer stay grounded?", top_k=1)
@@ -155,7 +155,7 @@ def test_answerer_uses_chat_completions(monkeypatch, tmp_path: Path) -> None:
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("RLA_OPENAI_WIRE_API", "chat")
-    store = RagStore(upload_dir=tmp_path, retrieval_mode="tfidf")
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
     pdf_bytes = make_pdf_with_text("Chat completions should answer with source citations.")
     store.ingest_pdf("chat.pdf", pdf_bytes)
     results = store.search("What should the answer include?", top_k=1)
@@ -189,7 +189,7 @@ def test_answerer_uses_responses_api_by_default(monkeypatch, tmp_path: Path) -> 
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.delenv("RLA_OPENAI_WIRE_API", raising=False)
-    store = RagStore(upload_dir=tmp_path, retrieval_mode="tfidf")
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
     pdf_bytes = make_pdf_with_text("Responses API should answer with source citations.")
     store.ingest_pdf("responses.pdf", pdf_bytes)
     results = store.search("What should the answer include?", top_k=1)
@@ -203,6 +203,38 @@ def test_answerer_uses_responses_api_by_default(monkeypatch, tmp_path: Path) -> 
     assert answer.answer == "Grounded response answer [1]"
     assert fake_client.responses.kwargs["model"] == answerer.model
     assert fake_client.responses.kwargs["input"][0]["role"] == "system"
+
+
+def test_store_persists_and_loads_chunks(tmp_path: Path) -> None:
+    upload_dir = tmp_path / "uploads"
+    index_dir = tmp_path / "index"
+    first_store = RagStore(upload_dir=upload_dir, index_dir=index_dir, retrieval_mode="tfidf")
+    pdf_bytes = make_pdf_with_text("Persistent indexes keep uploaded document chunks after restart.")
+
+    first_store.ingest_pdf("persist.pdf", pdf_bytes)
+    second_store = RagStore(upload_dir=upload_dir, index_dir=index_dir, retrieval_mode="tfidf")
+    results = second_store.search("What keeps chunks after restart?", top_k=1)
+
+    assert (index_dir / "rag_store.json").exists()
+    assert len(second_store.list_documents()) == 1
+    assert results
+
+
+def test_reindex_uploads_rebuilds_store(tmp_path: Path) -> None:
+    upload_dir = tmp_path / "uploads"
+    index_dir = tmp_path / "index"
+    upload_dir.mkdir(parents=True)
+    (upload_dir / "manual.pdf").write_bytes(
+        make_pdf_with_text("Manual uploads can be reindexed into the local store.")
+    )
+    store = RagStore(upload_dir=upload_dir, index_dir=index_dir, retrieval_mode="tfidf")
+
+    documents = store.reindex_uploads()
+    results = store.search("What can be reindexed?", top_k=1)
+
+    assert len(documents) == 1
+    assert documents[0].filename == "manual.pdf"
+    assert results
 
 
 def test_answerer_reads_custom_base_url_and_model(monkeypatch) -> None:

@@ -15,7 +15,7 @@ from .schemas import (
 app = FastAPI(
     title="Research Learning Agent",
     description="Local RAG API for learning from uploaded PDFs.",
-    version="0.3.0",
+    version="0.4.0",
 )
 
 store = RagStore(upload_dir=Path("data/uploads"))
@@ -55,6 +55,19 @@ def list_documents() -> list[DocumentSummary]:
             chunks=document.chunks,
         )
         for document in store.list_documents()
+    ]
+
+
+@app.post("/documents/reindex", response_model=list[DocumentSummary])
+def reindex_documents() -> list[DocumentSummary]:
+    return [
+        DocumentSummary(
+            document_id=document.document_id,
+            filename=document.filename,
+            pages=document.pages,
+            chunks=document.chunks,
+        )
+        for document in store.reindex_uploads()
     ]
 
 

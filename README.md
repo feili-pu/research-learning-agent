@@ -44,6 +44,18 @@ If `OPENAI_API_KEY` is not configured, the app still works locally and returns a
 
 V3 uses the OpenAI-compatible Chat Completions API, so it can work with many relay or gateway services that expose a `/v1` endpoint.
 
+### V4
+
+V4 adds local index persistence.
+
+Uploaded PDFs are still saved under `data/uploads/`. Extracted document metadata and chunks are saved to:
+
+```text
+data/index/rag_store.json
+```
+
+When the API starts, it loads this JSON file and rebuilds the in-memory retrieval index. This means the app no longer forgets uploaded documents after a restart.
+
 ## Project Structure
 
 ```text
@@ -122,6 +134,14 @@ Use the Swagger UI at `http://127.0.0.1:8000/docs` and upload a PDF through the 
 GET /documents
 ```
 
+### Reindex Existing Uploads
+
+```text
+POST /documents/reindex
+```
+
+This scans existing PDF files in `data/uploads/`, extracts their text again, rebuilds chunks, saves `data/index/rag_store.json`, and refreshes the retrieval index.
+
 ### Ask A Question
 
 ```text
@@ -153,6 +173,7 @@ model: the LLM model name, or null when no LLM is used
 PDF upload
   -> pypdf extracts text
   -> text is split into overlapping chunks
+  -> metadata and chunks are saved to data/index/rag_store.json
   -> sentence-transformers encodes chunks into vectors
   -> query is encoded into a vector
   -> cosine-like vector similarity retrieves relevant chunks
@@ -162,8 +183,8 @@ PDF upload
 
 ## Next Milestones
 
-1. Add persistent vector storage.
-2. Add Agent tools for arXiv and GitHub.
-3. Add a frontend.
-4. Add evaluation data for retrieval quality.
-5. Add Docker deployment.
+1. Add Agent tools for arXiv and GitHub.
+2. Add a frontend.
+3. Add evaluation data for retrieval quality.
+4. Add Docker deployment.
+5. Replace JSON persistence with a dedicated vector database when scale requires it.
