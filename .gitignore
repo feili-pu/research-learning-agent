@@ -10,3 +10,5 @@ data/uploads/*
 !data/uploads/.gitkeep
 data/index/
 output/
+frontend/node_modules/
+frontend/dist/

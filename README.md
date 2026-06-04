@@ -4,15 +4,15 @@ A small RAG project for learning from papers, course PDFs, and open-source proje
 
 ## Current Goal
 
-The current version focuses on a local PDF question-answering workflow:
+The current version focuses on a local paper-learning workflow:
 
 1. Upload a PDF.
 2. Extract text from the PDF.
 3. Split the text into chunks.
 4. Build a local semantic retrieval index.
 5. Ask questions and return answers with source chunks.
-
-The project is still intentionally retrieval-only. It does not call an LLM yet. The answer is a grounded draft made from retrieved chunks, which helps us verify the data pipeline before adding Agent and generation logic.
+6. Generate study summaries, key points, and reading plans with an optional LLM.
+7. Use a scientific-style web frontend for daily testing.
 
 ## Version Notes
 
@@ -70,6 +70,26 @@ POST /study/reading-plan
 
 These endpoints retrieve relevant chunks and use task-specific prompts to generate study-friendly answers.
 
+### V6
+
+V6 adds a React + Vite frontend.
+
+The frontend provides a scientific learning workspace with:
+
+```text
+PDF upload
+document list
+index rebuild
+free-form question answering
+study summary
+key points
+reading plan
+source chunk display
+retrieval/answer mode badges
+```
+
+The frontend runs on `http://127.0.0.1:5173` and proxies API calls to the backend at `http://127.0.0.1:8000`.
+
 ## Project Structure
 
 ```text
@@ -80,6 +100,8 @@ backend/
     schemas.py
 data/
   uploads/
+frontend/
+  src/
 tests/
 ```
 
@@ -125,6 +147,29 @@ Then open:
 ```text
 http://127.0.0.1:8000/docs
 ```
+
+## Run The Frontend
+
+Install frontend dependencies:
+
+```powershell
+cd frontend
+npm install
+```
+
+Start the Vite dev server:
+
+```powershell
+npm run dev -- --host 127.0.0.1 --port 5173
+```
+
+Then open:
+
+```text
+http://127.0.0.1:5173
+```
+
+The frontend calls the backend through `/api`, so keep the FastAPI server running on port `8000`.
 
 ## API Endpoints
 
@@ -219,6 +264,6 @@ PDF upload
 
 1. Add Agent tools for arXiv and GitHub.
 2. Add document-level filtering for study workflows.
-3. Add a frontend.
+3. Improve retrieval quality for broad study questions.
 4. Add evaluation data for retrieval quality.
 5. Add Docker deployment.
