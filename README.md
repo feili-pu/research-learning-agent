@@ -56,6 +56,20 @@ data/index/rag_store.json
 
 When the API starts, it loads this JSON file and rebuilds the in-memory retrieval index. This means the app no longer forgets uploaded documents after a restart.
 
+### V5
+
+V5 adds study workflow endpoints on top of retrieval and LLM answering.
+
+Instead of asking a free-form question only, you can ask the system to run common learning tasks:
+
+```text
+POST /study/summary
+POST /study/key-points
+POST /study/reading-plan
+```
+
+These endpoints retrieve relevant chunks and use task-specific prompts to generate study-friendly answers.
+
 ## Project Structure
 
 ```text
@@ -167,6 +181,26 @@ model: the LLM model name, or null when no LLM is used
 
 `llm_error_fallback` means retrieval worked, but the LLM request failed. Common causes are an invalid API key, unsupported model name, wrong relay base URL, or relay account limits.
 
+### Study Workflows
+
+```text
+POST /study/summary
+POST /study/key-points
+POST /study/reading-plan
+```
+
+Example JSON body:
+
+```json
+{
+  "topic": "这些文档",
+  "focus": "研究方法和实验结论",
+  "top_k": 6
+}
+```
+
+Use `/query` for free-form questions. Use `/study/*` when you want structured learning output such as a document overview, key points, or a reading plan.
+
 ## How V1 Works
 
 ```text
@@ -177,14 +211,14 @@ PDF upload
   -> sentence-transformers encodes chunks into vectors
   -> query is encoded into a vector
   -> cosine-like vector similarity retrieves relevant chunks
-  -> optional LLM generates a cited answer
+  -> optional LLM generates a cited answer or study workflow output
   -> API returns the answer and source chunks
 ```
 
 ## Next Milestones
 
 1. Add Agent tools for arXiv and GitHub.
-2. Add a frontend.
-3. Add evaluation data for retrieval quality.
-4. Add Docker deployment.
-5. Replace JSON persistence with a dedicated vector database when scale requires it.
+2. Add document-level filtering for study workflows.
+3. Add a frontend.
+4. Add evaluation data for retrieval quality.
+5. Add Docker deployment.

@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 from backend.app.answerer import Answerer
 from backend.app import main
 from backend.app.rag import RagStore
+from backend.app.schemas import StudyRequest
+from backend.app.study import StudyService
 
 
 def make_pdf_with_text(text: str) -> bytes:
@@ -235,6 +237,48 @@ def test_reindex_uploads_rebuilds_store(tmp_path: Path) -> None:
     assert len(documents) == 1
     assert documents[0].filename == "manual.pdf"
     assert results
+
+
+def test_study_summary_endpoint(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    main.store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    main.answerer = Answerer()
+    main.study_service = StudyService(store=main.store, answerer=main.answerer)
+    client = TestClient(main.app)
+    pdf_bytes = make_pdf_with_text("A study assistant summarizes methods, experiments, and conclusions.")
+    client.post(
+        "/documents/upload",
+        files={"file": ("study.pdf", pdf_bytes, "application/pdf")},
+    )
+
+    response = client.post(
+        "/study/summary",
+        json={"topic": "study assistant", "focus": "methods", "top_k": 2},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["task"] == "summary"
+    assert data["topic"] == "study assistant"
+    assert data["answer_mode"] == "retrieval_only"
+    assert data["sources"]
+
+
+def test_study_service_task_types(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    answerer = Answerer()
+    service = StudyService(store=store, answerer=answerer)
+    pdf_bytes = make_pdf_with_text("Reading plans and key points help students learn papers.")
+    store.ingest_pdf("tasks.pdf", pdf_bytes)
+
+    summary = service.summary(request=StudyRequest(topic="papers"))
+    key_points = service.key_points(request=StudyRequest(topic="papers"))
+    reading_plan = service.reading_plan(request=StudyRequest(topic="papers"))
+
+    assert summary.task == "summary"
+    assert key_points.task == "key_points"
+    assert reading_plan.task == "reading_plan"
 
 
 def test_answerer_reads_custom_base_url_and_model(monkeypatch) -> None:

@@ -10,16 +10,20 @@ from .schemas import (
     QueryRequest,
     QueryResponse,
     SourceChunk,
+    StudyRequest,
+    StudyResponse,
 )
+from .study import StudyService
 
 app = FastAPI(
     title="Research Learning Agent",
     description="Local RAG API for learning from uploaded PDFs.",
-    version="0.4.0",
+    version="0.5.0",
 )
 
 store = RagStore(upload_dir=Path("data/uploads"))
 answerer = Answerer()
+study_service = StudyService(store=store, answerer=answerer)
 
 
 @app.get("/health")
@@ -94,3 +98,18 @@ def query_documents(request: QueryRequest) -> QueryResponse:
             for result in results
         ],
     )
+
+
+@app.post("/study/summary", response_model=StudyResponse)
+def study_summary(request: StudyRequest) -> StudyResponse:
+    return study_service.summary(request)
+
+
+@app.post("/study/key-points", response_model=StudyResponse)
+def study_key_points(request: StudyRequest) -> StudyResponse:
+    return study_service.key_points(request)
+
+
+@app.post("/study/reading-plan", response_model=StudyResponse)
+def study_reading_plan(request: StudyRequest) -> StudyResponse:
+    return study_service.reading_plan(request)

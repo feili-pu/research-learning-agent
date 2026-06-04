@@ -36,3 +36,19 @@ class DocumentSummary(BaseModel):
     filename: str
     pages: int
     chunks: int
+
+
+class StudyRequest(BaseModel):
+    topic: str = Field(default="这些文档", min_length=1)
+    focus: str | None = None
+    top_k: int = Field(default=6, ge=1, le=12)
+
+
+class StudyResponse(BaseModel):
+    task: str
+    topic: str
+    retrieval_mode: str
+    answer_mode: str
+    model: str | None
+    answer: str
+    sources: list[SourceChunk]
