@@ -118,7 +118,8 @@ h2 {
 .panel,
 .main-panel,
 .answer-panel,
-.sources-panel {
+.sources-panel,
+.paper-panel {
   border: 1px solid #d4dcde;
   background: #ffffff;
   border-radius: 6px;
@@ -217,11 +218,26 @@ h2 {
   color: #174d52;
 }
 
+.mode-note {
+  margin: 0 0 14px;
+  color: #596c72;
+  font-size: 14px;
+}
+
 .input-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(160px, 220px) 112px;
   gap: 10px;
   align-items: end;
+}
+
+.input-grid.research-grid {
+  grid-template-columns:
+    minmax(0, 1.1fr)
+    minmax(0, 1fr)
+    minmax(140px, 180px)
+    minmax(140px, 180px)
+    112px;
 }
 
 .field {
@@ -282,17 +298,84 @@ h2 {
   color: #607077;
 }
 
-.result-layout {
+.result-stack {
   margin-top: 16px;
+  display: grid;
+  gap: 14px;
+}
+
+.result-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
   gap: 14px;
 }
 
 .answer-panel,
-.sources-panel {
+.sources-panel,
+.paper-panel {
   padding: 16px;
   min-width: 0;
+}
+
+.paper-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.subtle-count {
+  color: #6b7b82;
+  font-size: 12px;
+}
+
+.paper-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.paper-card {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 10px;
+  min-height: 130px;
+  padding: 12px;
+  border: 1px solid #e0e7e8;
+  border-radius: 6px;
+  background: #fbfdfd;
+}
+
+.paper-rank {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #bdd1d3;
+  border-radius: 50%;
+  color: #245f64;
+  background: #edf6f6;
+  font-weight: 800;
+}
+
+.paper-card strong,
+.paper-card span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.paper-card strong {
+  font-size: 14px;
+}
+
+.paper-card span {
+  margin-top: 4px;
+  color: #62727a;
+  font-size: 12px;
+}
+
+.paper-card p {
+  margin: 8px 0 0;
+  color: #34464c;
+  font-size: 13px;
 }
 
 .answer-meta {
@@ -359,7 +442,8 @@ h2 {
 @media (max-width: 980px) {
   .workspace,
   .result-layout,
-  .input-grid {
+  .input-grid,
+  .input-grid.research-grid {
     grid-template-columns: 1fr;
   }
 
@@ -383,4 +467,3 @@ h2 {
     font-size: 26px;
   }
 }
-

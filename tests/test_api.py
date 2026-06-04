@@ -4,8 +4,9 @@ from fastapi.testclient import TestClient
 
 from backend.app.answerer import Answerer
 from backend.app import main
+from backend.app.literature import LiteratureService
 from backend.app.rag import RagStore
-from backend.app.schemas import StudyRequest
+from backend.app.schemas import LiteratureRequest, StudyRequest
 from backend.app.study import StudyService
 
 
@@ -293,3 +294,62 @@ def test_answerer_reads_custom_base_url_and_model(monkeypatch) -> None:
     assert answerer.model == "test-model"
     assert answerer.wire_api == "responses"
     assert answerer.client is not None
+
+
+def test_literature_search_ranks_papers(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    answerer = Answerer()
+    service = LiteratureService(store=store, answerer=answerer)
+    store.ingest_pdf(
+        "graph-rag.pdf",
+        make_pdf_with_text("Graph retrieval augmented generation uses graph search for literature review."),
+    )
+    store.ingest_pdf(
+        "vision.pdf",
+        make_pdf_with_text("Computer vision segmentation uses image masks and convolutional networks."),
+    )
+
+    response = service.search(
+        LiteratureRequest(query="graph retrieval augmented generation", top_k_documents=2, evidence_k=4)
+    )
+
+    assert response.retrieval_mode == "tfidf"
+    assert response.papers
+    assert response.papers[0].filename == "graph-rag.pdf"
+    assert response.papers[0].evidence_count >= 1
+    assert response.sources
+
+
+def test_literature_methods_endpoint(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    main.store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    main.answerer = Answerer()
+    main.study_service = StudyService(store=main.store, answerer=main.answerer)
+    main.literature_service = LiteratureService(store=main.store, answerer=main.answerer)
+    client = TestClient(main.app)
+    pdf_bytes = make_pdf_with_text(
+        "Literature review methods compare retrieval, reranking, topic clustering, and evidence synthesis."
+    )
+    client.post(
+        "/documents/upload",
+        files={"file": ("methods.pdf", pdf_bytes, "application/pdf")},
+    )
+
+    response = client.post(
+        "/literature/methods",
+        json={
+            "query": "literature review methods",
+            "focus": "retrieval and reranking",
+            "top_k_documents": 3,
+            "evidence_k": 5,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["task"] == "method_map"
+    assert data["query"] == "literature review methods"
+    assert data["answer_mode"] == "retrieval_only"
+    assert data["papers"]
+    assert data["sources"]

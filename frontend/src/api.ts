@@ -28,6 +28,35 @@ export type StudyResponse = QueryResponse & {
   topic: string;
 };
 
+export type PaperCandidate = {
+  document_id: string;
+  filename: string;
+  pages: number;
+  chunks: number;
+  score: number;
+  evidence_count: number;
+  evidence_pages: number[];
+  preview: string;
+};
+
+export type LiteratureSearchResponse = {
+  query: string;
+  retrieval_mode: string;
+  papers: PaperCandidate[];
+  sources: SourceChunk[];
+};
+
+export type LiteratureReviewResponse = {
+  task: string;
+  query: string;
+  retrieval_mode: string;
+  answer_mode: string;
+  model: string | null;
+  answer: string;
+  papers: PaperCandidate[];
+  sources: SourceChunk[];
+};
+
 const API_BASE = "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -81,3 +110,39 @@ export function runStudyTask(
   });
 }
 
+export function searchLiterature(
+  query: string,
+  focus: string,
+  topKDocuments: number,
+  evidenceK: number
+) {
+  return request<LiteratureSearchResponse>("/literature/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query,
+      focus: focus || null,
+      top_k_documents: topKDocuments,
+      evidence_k: evidenceK
+    })
+  });
+}
+
+export function runLiteratureTask(
+  task: "review" | "methods" | "details",
+  query: string,
+  focus: string,
+  topKDocuments: number,
+  evidenceK: number
+) {
+  return request<LiteratureReviewResponse>(`/literature/${task}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query,
+      focus: focus || null,
+      top_k_documents: topKDocuments,
+      evidence_k: evidenceK
+    })
+  });
+}

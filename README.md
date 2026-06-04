@@ -90,6 +90,34 @@ retrieval/answer mode badges
 
 The frontend runs on `http://127.0.0.1:5173` and proxies API calls to the backend at `http://127.0.0.1:8000`.
 
+### V7
+
+V7 changes the product direction from a single-document learning tool to a direction-level literature research workspace.
+
+Instead of asking the system to study every uploaded paper, users can enter a research direction such as:
+
+```text
+water quality prediction neural networks
+graph neural networks for recommendation
+remote sensing change detection
+```
+
+The system then:
+
+1. Searches the backend paper library for relevant evidence chunks.
+2. Aggregates matching chunks into paper-level candidates.
+3. Ranks the most relevant papers.
+4. Generates a direction review, method map, or detailed briefing from the selected evidence.
+
+New V7 endpoints:
+
+```text
+POST /literature/search
+POST /literature/review
+POST /literature/methods
+POST /literature/details
+```
+
 ## Project Structure
 
 ```text
@@ -246,6 +274,34 @@ Example JSON body:
 
 Use `/query` for free-form questions. Use `/study/*` when you want structured learning output such as a document overview, key points, or a reading plan.
 
+### Direction-Level Literature Workflows
+
+```text
+POST /literature/search
+POST /literature/review
+POST /literature/methods
+POST /literature/details
+```
+
+Example JSON body:
+
+```json
+{
+  "query": "water quality prediction neural networks",
+  "focus": "methods and experiments",
+  "top_k_documents": 3,
+  "evidence_k": 8
+}
+```
+
+Use `/literature/search` when you only want relevant paper ranking and evidence chunks.
+
+Use `/literature/review` for a direction-level literature overview.
+
+Use `/literature/methods` when you want method categories, technical details, advantages, limitations, and corresponding papers.
+
+Use `/literature/details` when you want a focused briefing for proposal writing, reproduction, or deeper reading.
+
 ## How V1 Works
 
 ```text
@@ -260,10 +316,22 @@ PDF upload
   -> API returns the answer and source chunks
 ```
 
+## How V7 Works
+
+```text
+research direction
+  -> retrieve more candidate chunks from the whole paper library
+  -> group chunks by document_id
+  -> score and rank paper-level candidates
+  -> keep evidence from top papers
+  -> optional LLM generates a review, method map, or detailed briefing
+  -> frontend displays paper ranking, answer, and evidence chunks
+```
+
 ## Next Milestones
 
-1. Add Agent tools for arXiv and GitHub.
-2. Add document-level filtering for study workflows.
-3. Improve retrieval quality for broad study questions.
-4. Add evaluation data for retrieval quality.
-5. Add Docker deployment.
+1. Add paper metadata extraction such as title, authors, year, abstract, and venue.
+2. Add duplicate-paper detection.
+3. Add section-aware retrieval for Abstract, Methods, Results, and Conclusion.
+4. Add evaluation data for direction-level retrieval quality.
+5. Add Agent tools for arXiv, Semantic Scholar, and GitHub.

@@ -3,10 +3,14 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, UploadFile
 
 from .answerer import Answerer
+from .literature import LiteratureService
 from .rag import RagStore
 from .schemas import (
     DocumentIngestResponse,
     DocumentSummary,
+    LiteratureRequest,
+    LiteratureReviewResponse,
+    LiteratureSearchResponse,
     QueryRequest,
     QueryResponse,
     SourceChunk,
@@ -18,12 +22,13 @@ from .study import StudyService
 app = FastAPI(
     title="Research Learning Agent",
     description="Local RAG API for learning from uploaded PDFs.",
-    version="0.5.0",
+    version="0.7.0",
 )
 
 store = RagStore(upload_dir=Path("data/uploads"))
 answerer = Answerer()
 study_service = StudyService(store=store, answerer=answerer)
+literature_service = LiteratureService(store=store, answerer=answerer)
 
 
 @app.get("/health")
@@ -113,3 +118,23 @@ def study_key_points(request: StudyRequest) -> StudyResponse:
 @app.post("/study/reading-plan", response_model=StudyResponse)
 def study_reading_plan(request: StudyRequest) -> StudyResponse:
     return study_service.reading_plan(request)
+
+
+@app.post("/literature/search", response_model=LiteratureSearchResponse)
+def literature_search(request: LiteratureRequest) -> LiteratureSearchResponse:
+    return literature_service.search(request)
+
+
+@app.post("/literature/review", response_model=LiteratureReviewResponse)
+def literature_review(request: LiteratureRequest) -> LiteratureReviewResponse:
+    return literature_service.review(request)
+
+
+@app.post("/literature/methods", response_model=LiteratureReviewResponse)
+def literature_methods(request: LiteratureRequest) -> LiteratureReviewResponse:
+    return literature_service.methods(request)
+
+
+@app.post("/literature/details", response_model=LiteratureReviewResponse)
+def literature_details(request: LiteratureRequest) -> LiteratureReviewResponse:
+    return literature_service.details(request)
