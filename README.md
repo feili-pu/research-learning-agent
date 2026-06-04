@@ -42,6 +42,8 @@ If `OPENAI_API_KEY` is configured, `/query` sends the retrieved chunks to an LLM
 
 If `OPENAI_API_KEY` is not configured, the app still works locally and returns a retrieval-only answer with the most relevant source chunks.
 
+V3 uses the OpenAI-compatible Chat Completions API, so it can work with many relay or gateway services that expose a `/v1` endpoint.
+
 ## Project Structure
 
 ```text
@@ -78,6 +80,8 @@ $env:RLA_LLM_MODEL="gpt-4o-mini"
 `RLA_LLM_MODEL` is optional. If it is not set, the app uses `gpt-4o-mini`.
 
 For local development, you can also copy `.env.example` to `.env` and fill in your own values. `.env` is ignored by Git.
+
+Never commit your real API key. Keep it in your shell environment or local `.env` file only.
 
 ## Run The API
 
@@ -137,6 +141,8 @@ retrieval_mode: semantic or tfidf
 answer_mode: llm, retrieval_only, or no_sources
 model: the LLM model name, or null when no LLM is used
 ```
+
+`llm_error_fallback` means retrieval worked, but the LLM request failed. Common causes are an invalid API key, unsupported model name, wrong relay base URL, or relay account limits.
 
 ## How V1 Works
 

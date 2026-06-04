@@ -8,6 +8,14 @@ try:
 except ImportError:
     OpenAI = None
 
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
+
+if load_dotenv:
+    load_dotenv()
+
 
 @dataclass
 class AnswerResult:
@@ -36,24 +44,41 @@ class Answerer:
 
         if self.client is None:
             return AnswerResult(
-                answer=self._retrieval_only_answer(question, results),
+                answer=self._retrieval_only_answer(
+                    question,
+                    results,
+                    "V3 found relevant sources, but no LLM API key is configured yet.",
+                ),
                 answer_mode="retrieval_only",
                 model=None,
             )
 
         prompt = self._build_prompt(question, results)
         try:
-            response = self.client.responses.create(
+            response = self.client.chat.completions.create(
                 model=self.model,
-                input=prompt,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a research learning assistant. Answer using only the provided sources. "
+                            "If the sources are insufficient, say what is missing. Cite sources with bracket numbers like [1]."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
             )
             return AnswerResult(
-                answer=response.output_text,
+                answer=response.choices[0].message.content or "",
                 answer_mode="llm",
                 model=self.model,
             )
         except Exception as exc:
-            fallback = self._retrieval_only_answer(question, results)
+            fallback = self._retrieval_only_answer(
+                question,
+                results,
+                "V3 found relevant sources, but LLM generation failed.",
+            )
             return AnswerResult(
                 answer=(
                     "LLM generation failed, so V3 fell back to retrieval-only mode. "
@@ -63,7 +88,12 @@ class Answerer:
                 model=None,
             )
 
-    def _retrieval_only_answer(self, question: str, results: list[SearchResult]) -> str:
+    def _retrieval_only_answer(
+        self,
+        question: str,
+        results: list[SearchResult],
+        reason: str,
+    ) -> str:
         excerpts = []
         for index, result in enumerate(results, start=1):
             text = self._shorten(result.chunk.text, max_chars=500)
@@ -71,8 +101,7 @@ class Answerer:
 
         joined = "\n".join(excerpts)
         return (
-            "V3 found relevant sources, but no LLM API key is configured yet. "
-            "Here are the retrieved chunks to ground your answer.\n\n"
+            f"{reason} Here are the retrieved chunks to ground your answer.\n\n"
             f"Question: {question}\n\n"
             f"Sources:\n{joined}"
         )
@@ -94,9 +123,7 @@ class Answerer:
 
         joined_sources = "\n\n".join(sources)
         return (
-            "You are a research learning assistant. Answer the question using only the provided sources. "
-            "If the sources are insufficient, say what is missing. Cite sources with bracket numbers like [1].\n\n"
-            f"Question:\n{question}\n\n"
+            f"Answer this question:\n{question}\n\n"
             f"Sources:\n{joined_sources}"
         )
 

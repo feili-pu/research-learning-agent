@@ -7,4 +7,5 @@ scikit-learn
 numpy
 sentence-transformers
 openai
+python-dotenv
 pytest

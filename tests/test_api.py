@@ -103,12 +103,15 @@ def test_answerer_returns_retrieval_only_without_api_key(monkeypatch, tmp_path: 
 
 
 def test_answerer_falls_back_when_llm_fails(monkeypatch, tmp_path: Path) -> None:
-    class BrokenResponses:
+    class BrokenCompletions:
         def create(self, **kwargs):
             raise RuntimeError("fake failure")
 
+    class BrokenChat:
+        completions = BrokenCompletions()
+
     class BrokenClient:
-        responses = BrokenResponses()
+        chat = BrokenChat()
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     store = RagStore(upload_dir=tmp_path, retrieval_mode="tfidf")
@@ -123,7 +126,51 @@ def test_answerer_falls_back_when_llm_fails(monkeypatch, tmp_path: Path) -> None
     assert answer.answer_mode == "llm_error_fallback"
     assert answer.model is None
     assert "Error type: RuntimeError" in answer.answer
+    assert "LLM generation failed" in answer.answer
     assert "Sources:" in answer.answer
+
+
+def test_answerer_uses_chat_completions(monkeypatch, tmp_path: Path) -> None:
+    class Message:
+        content = "Grounded answer [1]"
+
+    class Choice:
+        message = Message()
+
+    class Response:
+        choices = [Choice()]
+
+    class FakeCompletions:
+        def __init__(self):
+            self.kwargs = None
+
+        def create(self, **kwargs):
+            self.kwargs = kwargs
+            return Response()
+
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeCompletions()
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = FakeChat()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    store = RagStore(upload_dir=tmp_path, retrieval_mode="tfidf")
+    pdf_bytes = make_pdf_with_text("Chat completions should answer with source citations.")
+    store.ingest_pdf("chat.pdf", pdf_bytes)
+    results = store.search("What should the answer include?", top_k=1)
+    answerer = Answerer()
+    fake_client = FakeClient()
+    answerer.client = fake_client
+
+    answer = answerer.answer("What should the answer include?", results)
+
+    assert answer.answer_mode == "llm"
+    assert answer.answer == "Grounded answer [1]"
+    assert fake_client.chat.completions.kwargs["model"] == answerer.model
+    assert fake_client.chat.completions.kwargs["messages"][0]["role"] == "system"
 
 
 def test_answerer_reads_custom_base_url_and_model(monkeypatch) -> None:
