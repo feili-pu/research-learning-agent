@@ -5,7 +5,7 @@ from openai import OpenAI
 
 
 def main() -> None:
-    load_dotenv()
+    load_dotenv(override=True)
 
     api_key = os.getenv("OPENAI_API_KEY")
     base_url = (os.getenv("RLA_OPENAI_BASE_URL") or os.getenv("OPENAI_BASE_URL") or "").rstrip("/")

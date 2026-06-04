@@ -14,7 +14,7 @@ except ImportError:
     load_dotenv = None
 
 if load_dotenv:
-    load_dotenv()
+    load_dotenv(override=True)
 
 
 @dataclass
