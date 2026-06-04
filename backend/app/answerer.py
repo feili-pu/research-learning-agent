@@ -29,6 +29,7 @@ class Answerer:
         self.model = os.getenv("RLA_LLM_MODEL", model)
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.base_url = self._read_base_url()
+        self.wire_api = os.getenv("RLA_OPENAI_WIRE_API", "responses").strip().lower()
         self.client = self._build_client()
 
     def answer(self, question: str, results: list[SearchResult]) -> AnswerResult:
@@ -55,21 +56,9 @@ class Answerer:
 
         prompt = self._build_prompt(question, results)
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a research learning assistant. Answer using only the provided sources. "
-                            "If the sources are insufficient, say what is missing. Cite sources with bracket numbers like [1]."
-                        ),
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-            )
+            answer = self._call_llm(prompt)
             return AnswerResult(
-                answer=response.choices[0].message.content or "",
+                answer=answer,
                 answer_mode="llm",
                 model=self.model,
             )
@@ -146,3 +135,35 @@ class Answerer:
             return OpenAI(api_key=self.api_key, base_url=self.base_url)
 
         return OpenAI(api_key=self.api_key)
+
+    def _call_llm(self, prompt: str) -> str:
+        if self.wire_api == "chat":
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a research learning assistant. Answer using only the provided sources. "
+                            "If the sources are insufficient, say what is missing. Cite sources with bracket numbers like [1]."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            return response.choices[0].message.content or ""
+
+        response = self.client.responses.create(
+            model=self.model,
+            input=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a research learning assistant. Answer using only the provided sources. "
+                        "If the sources are insufficient, say what is missing. Cite sources with bracket numbers like [1]."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+        )
+        return response.output_text

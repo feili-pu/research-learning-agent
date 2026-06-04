@@ -103,15 +103,12 @@ def test_answerer_returns_retrieval_only_without_api_key(monkeypatch, tmp_path: 
 
 
 def test_answerer_falls_back_when_llm_fails(monkeypatch, tmp_path: Path) -> None:
-    class BrokenCompletions:
+    class BrokenResponses:
         def create(self, **kwargs):
             raise RuntimeError("fake failure")
 
-    class BrokenChat:
-        completions = BrokenCompletions()
-
     class BrokenClient:
-        chat = BrokenChat()
+        responses = BrokenResponses()
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     store = RagStore(upload_dir=tmp_path, retrieval_mode="tfidf")
@@ -157,6 +154,7 @@ def test_answerer_uses_chat_completions(monkeypatch, tmp_path: Path) -> None:
             self.chat = FakeChat()
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("RLA_OPENAI_WIRE_API", "chat")
     store = RagStore(upload_dir=tmp_path, retrieval_mode="tfidf")
     pdf_bytes = make_pdf_with_text("Chat completions should answer with source citations.")
     store.ingest_pdf("chat.pdf", pdf_bytes)
@@ -173,13 +171,49 @@ def test_answerer_uses_chat_completions(monkeypatch, tmp_path: Path) -> None:
     assert fake_client.chat.completions.kwargs["messages"][0]["role"] == "system"
 
 
+def test_answerer_uses_responses_api_by_default(monkeypatch, tmp_path: Path) -> None:
+    class Response:
+        output_text = "Grounded response answer [1]"
+
+    class FakeResponses:
+        def __init__(self):
+            self.kwargs = None
+
+        def create(self, **kwargs):
+            self.kwargs = kwargs
+            return Response()
+
+    class FakeClient:
+        def __init__(self):
+            self.responses = FakeResponses()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.delenv("RLA_OPENAI_WIRE_API", raising=False)
+    store = RagStore(upload_dir=tmp_path, retrieval_mode="tfidf")
+    pdf_bytes = make_pdf_with_text("Responses API should answer with source citations.")
+    store.ingest_pdf("responses.pdf", pdf_bytes)
+    results = store.search("What should the answer include?", top_k=1)
+    answerer = Answerer()
+    fake_client = FakeClient()
+    answerer.client = fake_client
+
+    answer = answerer.answer("What should the answer include?", results)
+
+    assert answer.answer_mode == "llm"
+    assert answer.answer == "Grounded response answer [1]"
+    assert fake_client.responses.kwargs["model"] == answerer.model
+    assert fake_client.responses.kwargs["input"][0]["role"] == "system"
+
+
 def test_answerer_reads_custom_base_url_and_model(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("RLA_OPENAI_BASE_URL", "https://example.test/v1/")
     monkeypatch.setenv("RLA_LLM_MODEL", "test-model")
+    monkeypatch.setenv("RLA_OPENAI_WIRE_API", "responses")
 
     answerer = Answerer()
 
     assert answerer.base_url == "https://example.test/v1"
     assert answerer.model == "test-model"
+    assert answerer.wire_api == "responses"
     assert answerer.client is not None
