@@ -69,10 +69,15 @@ Optional LLM configuration:
 
 ```powershell
 $env:OPENAI_API_KEY="your-api-key"
+$env:RLA_OPENAI_BASE_URL="https://your-openai-compatible-endpoint/v1"
 $env:RLA_LLM_MODEL="gpt-4o-mini"
 ```
 
+`RLA_OPENAI_BASE_URL` is optional. Use it when you call an OpenAI-compatible relay or gateway.
+
 `RLA_LLM_MODEL` is optional. If it is not set, the app uses `gpt-4o-mini`.
+
+For local development, you can also copy `.env.example` to `.env` and fill in your own values. `.env` is ignored by Git.
 
 ## Run The API
 

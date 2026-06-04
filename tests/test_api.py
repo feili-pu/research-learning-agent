@@ -124,3 +124,15 @@ def test_answerer_falls_back_when_llm_fails(monkeypatch, tmp_path: Path) -> None
     assert answer.model is None
     assert "Error type: RuntimeError" in answer.answer
     assert "Sources:" in answer.answer
+
+
+def test_answerer_reads_custom_base_url_and_model(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("RLA_OPENAI_BASE_URL", "https://example.test/v1/")
+    monkeypatch.setenv("RLA_LLM_MODEL", "test-model")
+
+    answerer = Answerer()
+
+    assert answerer.base_url == "https://example.test/v1"
+    assert answerer.model == "test-model"
+    assert answerer.client is not None

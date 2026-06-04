@@ -20,7 +20,8 @@ class Answerer:
     def __init__(self, model: str = "gpt-4o-mini") -> None:
         self.model = os.getenv("RLA_LLM_MODEL", model)
         self.api_key = os.getenv("OPENAI_API_KEY")
-        self.client = OpenAI(api_key=self.api_key) if OpenAI and self.api_key else None
+        self.base_url = self._read_base_url()
+        self.client = self._build_client()
 
     def answer(self, question: str, results: list[SearchResult]) -> AnswerResult:
         if not results:
@@ -103,3 +104,18 @@ class Answerer:
         if len(text) <= max_chars:
             return text
         return text[: max_chars - 3].rstrip() + "..."
+
+    def _read_base_url(self) -> str | None:
+        base_url = os.getenv("RLA_OPENAI_BASE_URL") or os.getenv("OPENAI_BASE_URL")
+        if not base_url:
+            return None
+        return base_url.rstrip("/")
+
+    def _build_client(self):
+        if OpenAI is None or not self.api_key:
+            return None
+
+        if self.base_url:
+            return OpenAI(api_key=self.api_key, base_url=self.base_url)
+
+        return OpenAI(api_key=self.api_key)
