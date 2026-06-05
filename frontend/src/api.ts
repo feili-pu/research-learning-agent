@@ -27,6 +27,17 @@ export type DocumentSummary = {
   metadata: PaperMetadata;
 };
 
+export type DocumentFilters = {
+  query?: string;
+  keyword?: string;
+  year_from?: string;
+  year_to?: string;
+  source?: string;
+  has_doi?: string;
+  duplicate?: string;
+  sort_by?: string;
+};
+
 export type SourceChunk = {
   document_id: string;
   filename: string;
@@ -93,8 +104,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export function getDocuments() {
-  return request<DocumentSummary[]>("/documents");
+export function getDocuments(filters: DocumentFilters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== "") {
+      params.set(key, value);
+    }
+  });
+  const query = params.toString();
+  return request<DocumentSummary[]>(query ? `/documents?${query}` : "/documents");
 }
 
 export function reindexDocuments() {

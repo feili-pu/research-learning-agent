@@ -25,7 +25,7 @@ from .study import StudyService
 app = FastAPI(
     title="Research Learning Agent",
     description="Local RAG API for learning from uploaded PDFs.",
-    version="0.11.0",
+    version="0.12.0",
 )
 
 store = RagStore(upload_dir=Path("data/uploads"))
@@ -59,8 +59,29 @@ async def upload_document(file: UploadFile = File(...)) -> DocumentIngestRespons
 
 
 @app.get("/documents", response_model=list[DocumentSummary])
-def list_documents() -> list[DocumentSummary]:
-    return [_document_summary(document) for document in store.list_documents()]
+def list_documents(
+    query: str | None = None,
+    keyword: str | None = None,
+    year_from: int | None = None,
+    year_to: int | None = None,
+    source: str | None = None,
+    has_doi: bool | None = None,
+    duplicate: bool | None = None,
+    sort_by: str = "title",
+) -> list[DocumentSummary]:
+    return [
+        _document_summary(document)
+        for document in store.filter_documents(
+            query=query,
+            keyword=keyword,
+            year_from=year_from,
+            year_to=year_to,
+            source=source,
+            has_doi=has_doi,
+            duplicate=duplicate,
+            sort_by=sort_by,
+        )
+    ]
 
 
 @app.post("/documents/reindex", response_model=list[DocumentSummary])

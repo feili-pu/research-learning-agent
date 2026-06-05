@@ -249,6 +249,37 @@ evidence_sections
 
 The frontend adds a section filter control and displays the section label on each evidence card.
 
+### V12
+
+V12 adds local paper-library filtering and sorting.
+
+`GET /documents` now accepts query parameters for managing a larger local library:
+
+```text
+query
+keyword
+year_from
+year_to
+source
+has_doi
+duplicate
+sort_by
+```
+
+The frontend paper library now includes filters for:
+
+```text
+title, author, DOI, or abstract search
+keyword search
+year range
+metadata source: local, crossref, or semantic_scholar
+DOI presence
+duplicate status
+sorting by title, year, citations, references, source, or filename
+```
+
+V12 is intentionally local-only. It does not connect to Elsevier or other journal APIs yet. The goal is to make the existing backend paper library easier to manage before adding more external data sources.
+
 ## Project Structure
 
 ```text
@@ -350,6 +381,12 @@ Use the Swagger UI at `http://127.0.0.1:8000/docs` and upload a PDF through the 
 
 ```text
 GET /documents
+```
+
+V12 supports optional filters:
+
+```text
+GET /documents?query=water&keyword=remote&year_from=2024&source=crossref&has_doi=true&duplicate=false&sort_by=year_desc
 ```
 
 ### Reindex Existing Uploads
@@ -522,10 +559,21 @@ PDF upload or reindex
   -> frontend lets the user focus on Abstract, Methods, Experiments, Results, or Conclusion
 ```
 
+## How V12 Works
+
+```text
+paper library filters
+  -> frontend collects local filter values
+  -> GET /documents receives query parameters
+  -> backend filters the existing local paper metadata
+  -> backend sorts the filtered documents
+  -> frontend displays a smaller, more manageable paper list
+```
+
 ## Next Milestones
 
-1. Add library filters by year, DOI, duplicate status, source, and keyword.
-2. Add evaluation data for direction-level retrieval quality.
-3. Add Agent tools for arXiv, Semantic Scholar, and GitHub.
-4. Add paper comparison workflows.
+1. Add evaluation data for direction-level retrieval quality.
+2. Add paper comparison workflows.
+3. Add external API mock providers for Elsevier, Scopus, ScienceDirect, arXiv, and Semantic Scholar.
+4. Add real provider connectors when API keys and access permissions are available.
 5. Add section extraction evaluation for PDFs with unusual layouts.

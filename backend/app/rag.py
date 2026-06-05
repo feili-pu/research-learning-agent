@@ -114,6 +114,39 @@ class RagStore:
     def list_documents(self) -> list[Document]:
         return list(self.documents.values())
 
+    def filter_documents(
+        self,
+        query: str | None = None,
+        keyword: str | None = None,
+        year_from: int | None = None,
+        year_to: int | None = None,
+        source: str | None = None,
+        has_doi: bool | None = None,
+        duplicate: bool | None = None,
+        sort_by: str = "title",
+    ) -> list[Document]:
+        documents = self.list_documents()
+        query_text = self._normalize_filter_text(query)
+        keyword_text = self._normalize_filter_text(keyword)
+        source_text = self._normalize_filter_text(source)
+
+        if query_text:
+            documents = [document for document in documents if self._document_matches_query(document, query_text)]
+        if keyword_text:
+            documents = [document for document in documents if self._document_matches_keyword(document, keyword_text)]
+        if year_from is not None:
+            documents = [document for document in documents if document.metadata.year is not None and document.metadata.year >= year_from]
+        if year_to is not None:
+            documents = [document for document in documents if document.metadata.year is not None and document.metadata.year <= year_to]
+        if source_text and source_text != "all":
+            documents = [document for document in documents if document.metadata.metadata_source.lower() == source_text]
+        if has_doi is not None:
+            documents = [document for document in documents if bool(document.metadata.doi) is has_doi]
+        if duplicate is not None:
+            documents = [document for document in documents if bool(document.metadata.duplicate_of) is duplicate]
+
+        return sorted(documents, key=lambda document: self._document_sort_key(document, sort_by))
+
     def reindex_uploads(self) -> list[Document]:
         self.documents = {}
         self.chunks = []
@@ -423,6 +456,53 @@ class RagStore:
 
     def _normalize_text(self, text: str) -> str:
         return re.sub(r"\s+", " ", text).strip()
+
+    def _normalize_filter_text(self, value: str | None) -> str | None:
+        if not value:
+            return None
+        normalized = self._normalize_text(value).lower()
+        return normalized or None
+
+    def _document_matches_query(self, document: Document, query: str) -> bool:
+        metadata = document.metadata
+        haystack = " ".join(
+            item
+            for item in [
+                document.filename,
+                metadata.title,
+                metadata.authors,
+                metadata.venue,
+                metadata.doi,
+                metadata.abstract,
+                metadata.publisher,
+                " ".join(metadata.keywords),
+                " ".join(metadata.fields_of_study),
+            ]
+            if item
+        ).lower()
+        return query in haystack
+
+    def _document_matches_keyword(self, document: Document, keyword: str) -> bool:
+        values = [*document.metadata.keywords, *document.metadata.fields_of_study]
+        return any(keyword in value.lower() for value in values)
+
+    def _document_sort_key(self, document: Document, sort_by: str):
+        sort_value = (sort_by or "title").lower()
+        metadata = document.metadata
+        title = (metadata.title or document.filename).lower()
+        if sort_value == "year_desc":
+            return (-(metadata.year or 0), title)
+        if sort_value == "year_asc":
+            return (metadata.year or 9999, title)
+        if sort_value == "citations_desc":
+            return (-(metadata.citation_count or 0), title)
+        if sort_value == "references_desc":
+            return (-(metadata.reference_count or 0), title)
+        if sort_value == "source":
+            return (metadata.metadata_source.lower(), title)
+        if sort_value == "filename":
+            return document.filename.lower()
+        return title
 
     def _shorten(self, text: str, max_chars: int) -> str:
         if len(text) <= max_chars:

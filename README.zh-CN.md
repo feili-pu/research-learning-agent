@@ -256,6 +256,37 @@ evidence_sections
 
 前端新增了章节筛选控件，并且会在每个证据卡片上显示章节标签。
 
+### V12：论文库筛选与管理
+
+V12 增加了本地论文库筛选和排序。
+
+`GET /documents` 现在支持这些查询参数：
+
+```text
+query
+keyword
+year_from
+year_to
+source
+has_doi
+duplicate
+sort_by
+```
+
+前端论文库现在支持：
+
+```text
+按标题、作者、DOI、摘要搜索
+按关键词搜索
+按年份范围筛选
+按元数据来源筛选：local、crossref、semantic_scholar
+按是否有 DOI 筛选
+按是否疑似重复筛选
+按标题、年份、引用数、参考文献数量、来源、文件名排序
+```
+
+V12 是纯本地功能，不接 Elsevier 或其他期刊 API。它的目标是先让已有后台论文库更容易管理，等本地管理稳定后，再接外部数据源。
+
 ## 项目结构
 
 ```text
@@ -357,6 +388,12 @@ GET /documents
 ```
 
 V8 后该接口会返回论文元数据。
+
+V12 后该接口支持可选筛选：
+
+```text
+GET /documents?query=water&keyword=remote&year_from=2024&source=crossref&has_doi=true&duplicate=false&sort_by=year_desc
+```
 
 ### 重新索引论文库
 
@@ -489,10 +526,21 @@ PDF 上传或重新索引
   -> 前端可以只看摘要、方法、实验、结果或结论
 ```
 
+## V12 工作流程
+
+```text
+论文库筛选条件
+  -> 前端收集本地筛选参数
+  -> GET /documents 接收查询参数
+  -> 后端筛选已有本地论文元数据
+  -> 后端对筛选后的论文排序
+  -> 前端展示更小、更容易管理的论文列表
+```
+
 ## 下一步计划
 
-1. 给论文库增加年份、DOI、重复状态、来源、关键词筛选。
-2. 增加方向级检索质量评估数据。
-3. 增加 Agent 工具，让系统自动查 arXiv、Semantic Scholar 和 GitHub。
-4. 增加论文对比工作流。
+1. 增加方向级检索质量评估数据。
+2. 增加论文对比工作流。
+3. 增加 Elsevier、Scopus、ScienceDirect、arXiv、Semantic Scholar 的外部 API mock provider。
+4. 等 API key 和访问权限具备后，再接真实 provider。
 5. 增加章节抽取评估，专门测试版式复杂的 PDF。

@@ -333,6 +333,65 @@ def test_documents_endpoint_returns_metadata(monkeypatch, tmp_path: Path) -> Non
     assert "duplicate_of" in data[0]["metadata"]
 
 
+def test_documents_endpoint_filters_library(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    main.store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    main.answerer = Answerer()
+    first = main.store.ingest_pdf(
+        "water-quality.pdf",
+        make_pdf_with_text("Water Quality Retrieval Abstract remote sensing neural model Keywords water Introduction text."),
+    )
+    first.metadata.title = "Water Quality Retrieval With Remote Sensing"
+    first.metadata.authors = "Alice Zhang"
+    first.metadata.year = 2025
+    first.metadata.doi = "10.1234/water.2025"
+    first.metadata.metadata_source = "crossref"
+    first.metadata.keywords = ["water quality", "remote sensing"]
+
+    second = main.store.ingest_pdf(
+        "biometric.pdf",
+        make_pdf_with_text("Biometric Template Protection Abstract face security Keywords biometric Introduction text."),
+    )
+    second.metadata.title = "Biometric Template Protection"
+    second.metadata.authors = "Bob Li"
+    second.metadata.year = 2023
+    second.metadata.metadata_source = "local"
+    second.metadata.keywords = ["biometric", "security"]
+
+    duplicate = main.store.ingest_pdf(
+        "water-copy.pdf",
+        make_pdf_with_text("Water Quality Duplicate Abstract same study Keywords water Introduction text."),
+    )
+    duplicate.metadata.title = "Water Quality Retrieval Copy"
+    duplicate.metadata.year = 2025
+    duplicate.metadata.doi = "10.1234/water.2025"
+    duplicate.metadata.metadata_source = "crossref"
+    duplicate.metadata.keywords = ["water quality"]
+    duplicate.metadata.duplicate_of = first.document_id
+    duplicate.metadata.duplicate_reason = "same_doi"
+
+    client = TestClient(main.app)
+
+    filtered = client.get(
+        "/documents",
+        params={
+            "query": "water",
+            "keyword": "remote",
+            "year_from": 2024,
+            "source": "crossref",
+            "has_doi": "true",
+            "duplicate": "false",
+            "sort_by": "year_desc",
+        },
+    )
+    duplicates = client.get("/documents", params={"duplicate": "true"})
+
+    assert filtered.status_code == 200
+    assert [item["document_id"] for item in filtered.json()] == [first.document_id]
+    assert duplicates.status_code == 200
+    assert [item["document_id"] for item in duplicates.json()] == [duplicate.document_id]
+
+
 def test_crossref_enrichment_updates_metadata(tmp_path: Path) -> None:
     class FakeCrossrefClient:
         def fetch_by_doi(self, doi: str):

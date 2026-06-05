@@ -68,6 +68,7 @@ h2 {
 .metric,
 .icon-button,
 .mode-tabs button,
+.secondary-button,
 .primary-button {
   display: inline-flex;
   align-items: center;
@@ -166,6 +167,28 @@ h2 {
 
 .upload-zone input {
   display: none;
+}
+
+.library-filters {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #e0e7e8;
+  border-radius: 6px;
+  background: #fbfdfd;
+  margin-bottom: 12px;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.filter-actions {
+  display: grid;
+  grid-template-columns: 1fr 88px;
+  gap: 8px;
 }
 
 .doc-list {
@@ -310,6 +333,17 @@ h2 {
   background: #1f6b70;
   color: #ffffff;
   border-radius: 6px;
+  font-weight: 700;
+}
+
+.secondary-button {
+  min-height: 36px;
+  justify-content: center;
+  border: 1px solid #cbd6d8;
+  background: #ffffff;
+  color: #31575c;
+  border-radius: 6px;
+  font-size: 13px;
   font-weight: 700;
 }
 

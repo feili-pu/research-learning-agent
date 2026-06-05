@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import {
   askQuestion,
+  DocumentFilters,
   DocumentSummary,
   enrichMetadata,
   getDocuments,
@@ -83,6 +84,14 @@ function App() {
   const [direction, setDirection] = useState("图神经网络在推荐系统中的应用");
   const [focus, setFocus] = useState("研究问题、代表方法、实验设置和可复现切入点");
   const [question, setQuestion] = useState("这个方向有哪些代表性方法？");
+  const [docQuery, setDocQuery] = useState("");
+  const [docKeyword, setDocKeyword] = useState("");
+  const [yearFrom, setYearFrom] = useState("");
+  const [yearTo, setYearTo] = useState("");
+  const [metadataSource, setMetadataSource] = useState("");
+  const [doiFilter, setDoiFilter] = useState("");
+  const [duplicateFilter, setDuplicateFilter] = useState("");
+  const [documentSort, setDocumentSort] = useState("title");
   const [sectionFilter, setSectionFilter] = useState("");
   const [topKDocuments, setTopKDocuments] = useState(5);
   const [evidenceK, setEvidenceK] = useState(18);
@@ -102,8 +111,21 @@ function App() {
     );
   }, [documents]);
 
-  async function refreshDocuments() {
-    const docs = await getDocuments();
+  function currentDocumentFilters(): DocumentFilters {
+    return {
+      query: docQuery,
+      keyword: docKeyword,
+      year_from: yearFrom,
+      year_to: yearTo,
+      source: metadataSource,
+      has_doi: doiFilter,
+      duplicate: duplicateFilter,
+      sort_by: documentSort
+    };
+  }
+
+  async function refreshDocuments(filters: DocumentFilters = currentDocumentFilters()) {
+    const docs = await getDocuments(filters);
     setDocuments(docs);
   }
 
@@ -139,6 +161,45 @@ function App() {
     } catch (err) {
       setError(String(err));
       setStatus("重建失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleApplyDocumentFilters() {
+    setBusy(true);
+    setError("");
+    setStatus("正在筛选论文库");
+    try {
+      await refreshDocuments();
+      setStatus("论文库筛选已应用");
+    } catch (err) {
+      setError(String(err));
+      setStatus("筛选失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleClearDocumentFilters() {
+    const emptyFilters = { sort_by: "title" };
+    setDocQuery("");
+    setDocKeyword("");
+    setYearFrom("");
+    setYearTo("");
+    setMetadataSource("");
+    setDoiFilter("");
+    setDuplicateFilter("");
+    setDocumentSort("title");
+    setBusy(true);
+    setError("");
+    setStatus("正在清除论文库筛选");
+    try {
+      await refreshDocuments(emptyFilters);
+      setStatus("论文库筛选已清除");
+    } catch (err) {
+      setError(String(err));
+      setStatus("清除筛选失败");
     } finally {
       setBusy(false);
     }
@@ -214,6 +275,7 @@ function App() {
           <section className="panel">
             <div className="panel-heading">
               <h2>后台论文库</h2>
+              <span className="subtle-count">{documents.length} 篇</span>
               <div className="panel-actions">
                 <button className="icon-button" onClick={handleEnrichMetadata} disabled={busy} title="用 Crossref / Semantic Scholar 刷新元数据">
                   <FileSearch size={17} />
@@ -232,6 +294,73 @@ function App() {
                 onChange={(event) => handleUpload(event.target.files?.[0] ?? null)}
               />
             </label>
+            <div className="library-filters">
+              <label className="field">
+                <span>标题 / 作者 / DOI</span>
+                <input value={docQuery} onChange={(event) => setDocQuery(event.target.value)} />
+              </label>
+              <label className="field">
+                <span>关键词</span>
+                <input value={docKeyword} onChange={(event) => setDocKeyword(event.target.value)} />
+              </label>
+              <div className="filter-grid">
+                <label className="field">
+                  <span>起始年份</span>
+                  <input value={yearFrom} inputMode="numeric" onChange={(event) => setYearFrom(event.target.value)} />
+                </label>
+                <label className="field">
+                  <span>结束年份</span>
+                  <input value={yearTo} inputMode="numeric" onChange={(event) => setYearTo(event.target.value)} />
+                </label>
+                <label className="field">
+                  <span>来源</span>
+                  <select value={metadataSource} onChange={(event) => setMetadataSource(event.target.value)}>
+                    <option value="">全部</option>
+                    <option value="local">local</option>
+                    <option value="crossref">crossref</option>
+                    <option value="semantic_scholar">semantic_scholar</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>DOI</span>
+                  <select value={doiFilter} onChange={(event) => setDoiFilter(event.target.value)}>
+                    <option value="">全部</option>
+                    <option value="true">有 DOI</option>
+                    <option value="false">无 DOI</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>重复</span>
+                  <select value={duplicateFilter} onChange={(event) => setDuplicateFilter(event.target.value)}>
+                    <option value="">全部</option>
+                    <option value="false">隐藏重复</option>
+                    <option value="true">只看重复</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>排序</span>
+                  <select value={documentSort} onChange={(event) => setDocumentSort(event.target.value)}>
+                    <option value="title">标题 A-Z</option>
+                    <option value="year_desc">年份新到旧</option>
+                    <option value="year_asc">年份旧到新</option>
+                    <option value="citations_desc">引用数高到低</option>
+                    <option value="references_desc">参考文献多到少</option>
+                    <option value="source">来源</option>
+                    <option value="filename">文件名</option>
+                  </select>
+                </label>
+              </div>
+              <div className="filter-actions">
+                <button className="secondary-button" onClick={handleApplyDocumentFilters} disabled={busy}>
+                  <Search size={15} />
+                  应用筛选
+                </button>
+                <button className="secondary-button" onClick={handleClearDocumentFilters} disabled={busy}>
+                  <RefreshCw size={15} />
+                  清除
+                </button>
+              </div>
+            </div>
             <div className="doc-list">
               {documents.map((doc) => (
                 <article className="doc-row" key={doc.document_id}>
