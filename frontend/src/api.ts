@@ -34,6 +34,7 @@ export type SourceChunk = {
   chunk_id: string;
   score: number;
   text: string;
+  section: string;
 };
 
 export type QueryResponse = {
@@ -59,6 +60,7 @@ export type PaperCandidate = {
   score: number;
   evidence_count: number;
   evidence_pages: number[];
+  evidence_sections: string[];
   preview: string;
 };
 
@@ -112,11 +114,11 @@ export function uploadDocument(file: File) {
   });
 }
 
-export function askQuestion(question: string, topK: number) {
+export function askQuestion(question: string, topK: number, sectionFilter: string) {
   return request<QueryResponse>("/query", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, top_k: topK })
+    body: JSON.stringify({ question, top_k: topK, section_filter: sectionFilter || null })
   });
 }
 
@@ -141,7 +143,8 @@ export function searchLiterature(
   query: string,
   focus: string,
   topKDocuments: number,
-  evidenceK: number
+  evidenceK: number,
+  sectionFilter: string
 ) {
   return request<LiteratureSearchResponse>("/literature/search", {
     method: "POST",
@@ -150,7 +153,8 @@ export function searchLiterature(
       query,
       focus: focus || null,
       top_k_documents: topKDocuments,
-      evidence_k: evidenceK
+      evidence_k: evidenceK,
+      section_filter: sectionFilter || null
     })
   });
 }
@@ -160,7 +164,8 @@ export function runLiteratureTask(
   query: string,
   focus: string,
   topKDocuments: number,
-  evidenceK: number
+  evidenceK: number,
+  sectionFilter: string
 ) {
   return request<LiteratureReviewResponse>(`/literature/${task}`, {
     method: "POST",
@@ -169,7 +174,8 @@ export function runLiteratureTask(
       query,
       focus: focus || null,
       top_k_documents: topKDocuments,
-      evidence_k: evidenceK
+      evidence_k: evidenceK,
+      section_filter: sectionFilter || null
     })
   });
 }

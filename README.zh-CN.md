@@ -221,6 +221,41 @@ metadata_confidence: local、low、medium 或 high
 metadata_match_score: Semantic Scholar 标题匹配分数
 ```
 
+### V11：章节感知检索
+
+V11 增加了章节感知检索。
+
+每个 chunk 现在都会保存一个粗粒度论文节标签，例如：
+
+```text
+abstract
+introduction
+related_work
+methods
+experiments
+results
+discussion
+conclusion
+references
+unknown
+```
+
+`/query`、`/study/*` 和 `/literature/*` 都支持可选字段 `section_filter`。这样你可以只检索论文的某个部分，例如只看 `methods`，或者只看 `experiments`。
+
+来源片段现在会返回：
+
+```text
+section
+```
+
+相关论文候选还会返回：
+
+```text
+evidence_sections
+```
+
+前端新增了章节筛选控件，并且会在每个证据卡片上显示章节标签。
+
 ## 项目结构
 
 ```text
@@ -352,7 +387,8 @@ POST /query
 ```json
 {
   "question": "What is retrieval augmented generation?",
-  "top_k": 4
+  "top_k": 4,
+  "section_filter": "methods"
 }
 ```
 
@@ -370,7 +406,8 @@ POST /study/reading-plan
 {
   "topic": "这些文档",
   "focus": "研究方法和实验结论",
-  "top_k": 6
+  "top_k": 6,
+  "section_filter": "experiments"
 }
 ```
 
@@ -390,7 +427,8 @@ POST /literature/details
   "query": "water quality prediction neural networks",
   "focus": "methods and experiments",
   "top_k_documents": 3,
-  "evidence_k": 8
+  "evidence_k": 8,
+  "section_filter": "methods"
 }
 ```
 
@@ -438,10 +476,23 @@ PDF 上传或重新索引
   -> 前端展示增强来源和置信度信息
 ```
 
+## V11 工作流程
+
+```text
+PDF 上传或重新索引
+  -> 提取页面文本
+  -> 将文本切分成 chunks
+  -> 根据附近章节标题推断粗粒度 section
+  -> 将 section 保存到 data/index/rag_store.json
+  -> 检索时根据可选 section_filter 限定证据范围
+  -> API 返回带 section 的来源片段和论文候选
+  -> 前端可以只看摘要、方法、实验、结果或结论
+```
+
 ## 下一步计划
 
-1. 增加章节感知检索，区分 Abstract、Methods、Results、Conclusion。
-2. 给论文库增加年份、DOI、重复状态、来源、关键词筛选。
-3. 增加方向级检索质量评估数据。
-4. 增加 Agent 工具，让系统自动查 arXiv、Semantic Scholar 和 GitHub。
-5. 增加论文对比工作流。
+1. 给论文库增加年份、DOI、重复状态、来源、关键词筛选。
+2. 增加方向级检索质量评估数据。
+3. 增加 Agent 工具，让系统自动查 arXiv、Semantic Scholar 和 GitHub。
+4. 增加论文对比工作流。
+5. 增加章节抽取评估，专门测试版式复杂的 PDF。

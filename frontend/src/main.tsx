@@ -36,6 +36,31 @@ import "./styles.css";
 type Mode = "direction-review" | "method-map" | "detail-briefing" | "paper-search" | "query";
 type AppResult = QueryResponse | LiteratureReviewResponse | LiteratureSearchResponse | null;
 
+const sectionOptions = [
+  { value: "", label: "全部章节" },
+  { value: "abstract", label: "摘要" },
+  { value: "introduction", label: "引言" },
+  { value: "related_work", label: "相关工作" },
+  { value: "methods", label: "方法" },
+  { value: "experiments", label: "实验" },
+  { value: "results", label: "结果" },
+  { value: "discussion", label: "讨论" },
+  { value: "conclusion", label: "结论" }
+];
+
+const sectionLabels: Record<string, string> = {
+  abstract: "摘要",
+  introduction: "引言",
+  related_work: "相关工作",
+  methods: "方法",
+  experiments: "实验",
+  results: "结果",
+  discussion: "讨论",
+  conclusion: "结论",
+  references: "参考文献",
+  unknown: "未知章节"
+};
+
 const modeLabels: Record<Mode, string> = {
   "direction-review": "方向综述",
   "method-map": "方法梳理",
@@ -58,6 +83,7 @@ function App() {
   const [direction, setDirection] = useState("图神经网络在推荐系统中的应用");
   const [focus, setFocus] = useState("研究问题、代表方法、实验设置和可复现切入点");
   const [question, setQuestion] = useState("这个方向有哪些代表性方法？");
+  const [sectionFilter, setSectionFilter] = useState("");
   const [topKDocuments, setTopKDocuments] = useState(5);
   const [evidenceK, setEvidenceK] = useState(18);
   const [result, setResult] = useState<AppResult>(null);
@@ -152,13 +178,13 @@ function App() {
 
   function runCurrentTask() {
     if (mode === "query") {
-      return askQuestion(question, Math.min(evidenceK, 10));
+      return askQuestion(question, Math.min(evidenceK, 10), sectionFilter);
     }
     if (mode === "paper-search") {
-      return searchLiterature(direction, focus, topKDocuments, evidenceK);
+      return searchLiterature(direction, focus, topKDocuments, evidenceK, sectionFilter);
     }
     const task = mode === "direction-review" ? "review" : mode === "method-map" ? "methods" : "details";
-    return runLiteratureTask(task, direction, focus, topKDocuments, evidenceK);
+    return runLiteratureTask(task, direction, focus, topKDocuments, evidenceK, sectionFilter);
   }
 
   return (
@@ -259,6 +285,16 @@ function App() {
                 </label>
               </>
             )}
+            <label className="field compact">
+              <span>章节范围</span>
+              <select value={sectionFilter} onChange={(event) => setSectionFilter(event.target.value)}>
+                {sectionOptions.map((option) => (
+                  <option key={option.value || "all"} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label className="field compact">
               <span>候选论文：{topKDocuments}</span>
               <input
@@ -361,6 +397,9 @@ function PaperList({ papers }: { papers: PaperCandidate[] }) {
                 {metadataLine(paper.metadata)} · score {paper.score.toFixed(3)} · {paper.evidence_count} 个证据 · 第{" "}
                 {paper.evidence_pages.join(", ")} 页
               </span>
+              {paper.evidence_sections.length > 0 && (
+                <span>章节 {paper.evidence_sections.map(sectionLabel).join(" / ")}</span>
+              )}
               {paper.metadata.doi && <span>DOI {paper.metadata.doi}</span>}
               <span>{sourceLine(paper.metadata)}</span>
               {paper.metadata.duplicate_of && <em>疑似重复：{paper.metadata.duplicate_reason}</em>}
@@ -379,7 +418,7 @@ function SourceItem({ source, index }: { source: SourceChunk; index: number }) {
     <article className="source-card">
       <div className="source-head">
         <strong>
-          [{index}] {source.filename} · 第 {source.page} 页
+          [{index}] {source.filename} · 第 {source.page} 页 · {sectionLabel(source.section)}
         </strong>
         <span>{source.score.toFixed(3)}</span>
       </div>
@@ -387,6 +426,10 @@ function SourceItem({ source, index }: { source: SourceChunk; index: number }) {
       <small>{source.chunk_id}</small>
     </article>
   );
+}
+
+function sectionLabel(section: string) {
+  return sectionLabels[section] ?? section;
 }
 
 function displayTitle(item: { filename: string; metadata: { title: string | null } }) {

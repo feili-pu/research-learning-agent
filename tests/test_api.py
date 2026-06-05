@@ -6,7 +6,7 @@ from backend.app.answerer import Answerer
 from backend.app import main
 from backend.app.crossref import CrossrefWork
 from backend.app.literature import LiteratureService
-from backend.app.rag import RagStore
+from backend.app.rag import Chunk, RagStore
 from backend.app.semantic_scholar import SemanticScholarClient, SemanticScholarWork
 from backend.app.schemas import LiteratureRequest, StudyRequest
 from backend.app.study import StudyService
@@ -78,6 +78,7 @@ def test_upload_and_query_pdf(monkeypatch, tmp_path: Path) -> None:
     assert query_response.json()["answer_mode"] == "retrieval_only"
     assert query_response.json()["model"] is None
     assert query_response.json()["sources"]
+    assert "section" in query_response.json()["sources"][0]
 
 
 def test_semantic_store_can_build_index(tmp_path: Path) -> None:
@@ -91,6 +92,35 @@ def test_semantic_store_can_build_index(tmp_path: Path) -> None:
 
     assert store.active_retrieval_mode == "semantic"
     assert results
+
+
+def test_search_can_filter_by_section(tmp_path: Path) -> None:
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    store.chunks = [
+        Chunk(
+            document_id="paper-1",
+            filename="paper.pdf",
+            page=1,
+            chunk_id="paper-1-abstract",
+            text="Abstract graph retrieval overview and motivation.",
+            section="abstract",
+        ),
+        Chunk(
+            document_id="paper-1",
+            filename="paper.pdf",
+            page=2,
+            chunk_id="paper-1-methods",
+            text="Methods graph neural network training and reranking pipeline.",
+            section="methods",
+        ),
+    ]
+    store._rebuild_index()
+
+    results = store.search("graph neural network training", top_k=2, section_filter="methods")
+
+    assert len(results) == 1
+    assert results[0].chunk.chunk_id == "paper-1-methods"
+    assert results[0].chunk.section == "methods"
 
 
 def test_answerer_returns_retrieval_only_without_api_key(monkeypatch, tmp_path: Path) -> None:

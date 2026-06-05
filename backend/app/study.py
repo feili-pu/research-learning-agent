@@ -45,7 +45,7 @@ class StudyService:
         return self._run("reading_plan", request, prompt)
 
     def _run(self, task: str, request: StudyRequest, prompt: str) -> StudyResponse:
-        results = self.store.search(prompt, request.top_k)
+        results = self.store.search(prompt, request.top_k, request.section_filter)
         answer = self.answerer.answer(prompt, results)
         return StudyResponse(
             task=task,
@@ -62,6 +62,7 @@ class StudyService:
                     chunk_id=result.chunk.chunk_id,
                     score=result.score,
                     text=result.chunk.text,
+                    section=result.chunk.section,
                 )
                 for result in results
             ],
@@ -82,4 +83,3 @@ class StudyService:
             f"要求：{instruction}\n"
             "请只依据资料来源回答，并尽量引用来源编号。"
         )
-

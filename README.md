@@ -214,6 +214,41 @@ metadata_confidence: local, low, medium, or high
 metadata_match_score: similarity score for Semantic Scholar title matching
 ```
 
+### V11
+
+V11 adds section-aware retrieval.
+
+Each chunk now stores a coarse paper section label such as:
+
+```text
+abstract
+introduction
+related_work
+methods
+experiments
+results
+discussion
+conclusion
+references
+unknown
+```
+
+`/query`, `/study/*`, and `/literature/*` accept an optional `section_filter` field. This lets the system retrieve evidence only from a specific part of the paper, for example only `methods` or only `experiments`.
+
+Source chunks now include:
+
+```text
+section
+```
+
+Literature paper candidates also include:
+
+```text
+evidence_sections
+```
+
+The frontend adds a section filter control and displays the section label on each evidence card.
+
 ## Project Structure
 
 ```text
@@ -348,7 +383,8 @@ Example JSON body:
 ```json
 {
   "question": "What is retrieval augmented generation?",
-  "top_k": 4
+  "top_k": 4,
+  "section_filter": "methods"
 }
 ```
 
@@ -376,7 +412,8 @@ Example JSON body:
 {
   "topic": "这些文档",
   "focus": "研究方法和实验结论",
-  "top_k": 6
+  "top_k": 6,
+  "section_filter": "experiments"
 }
 ```
 
@@ -398,7 +435,8 @@ Example JSON body:
   "query": "water quality prediction neural networks",
   "focus": "methods and experiments",
   "top_k_documents": 3,
-  "evidence_k": 8
+  "evidence_k": 8,
+  "section_filter": "methods"
 }
 ```
 
@@ -471,10 +509,23 @@ existing paper metadata
   -> frontend displays the enriched source and confidence information
 ```
 
+## How V11 Works
+
+```text
+PDF upload or reindex
+  -> extract page text
+  -> split text into chunks
+  -> infer a coarse section label from nearby headings
+  -> persist section on each chunk in data/index/rag_store.json
+  -> apply optional section_filter during retrieval ranking
+  -> return section labels with source chunks and paper candidates
+  -> frontend lets the user focus on Abstract, Methods, Experiments, Results, or Conclusion
+```
+
 ## Next Milestones
 
-1. Add section-aware retrieval for Abstract, Methods, Results, and Conclusion.
-2. Add library filters by year, DOI, duplicate status, source, and keyword.
-3. Add evaluation data for direction-level retrieval quality.
-4. Add Agent tools for arXiv, Semantic Scholar, and GitHub.
-5. Add paper comparison workflows.
+1. Add library filters by year, DOI, duplicate status, source, and keyword.
+2. Add evaluation data for direction-level retrieval quality.
+3. Add Agent tools for arXiv, Semantic Scholar, and GitHub.
+4. Add paper comparison workflows.
+5. Add section extraction evaluation for PDFs with unusual layouts.

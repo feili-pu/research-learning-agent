@@ -86,7 +86,7 @@ class Answerer:
         excerpts = []
         for index, result in enumerate(results, start=1):
             text = self._shorten(result.chunk.text, max_chars=500)
-            excerpts.append(f"[{index}] Page {result.chunk.page}: {text}")
+            excerpts.append(f"[{index}] Page {result.chunk.page} · section {result.chunk.section}: {text}")
 
         joined = "\n".join(excerpts)
         return (
@@ -104,6 +104,7 @@ class Answerer:
                         f"[{index}]",
                         f"filename: {result.chunk.filename}",
                         f"page: {result.chunk.page}",
+                        f"section: {result.chunk.section}",
                         f"chunk_id: {result.chunk.chunk_id}",
                         f"text: {result.chunk.text}",
                     ]

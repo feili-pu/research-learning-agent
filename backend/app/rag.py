@@ -22,6 +22,7 @@ class Chunk:
     page: int
     chunk_id: str
     text: str
+    section: str = "unknown"
 
 
 @dataclass
@@ -147,7 +148,7 @@ class RagStore:
         self._save_store()
         return self.list_documents()
 
-    def search(self, question: str, top_k: int) -> list[SearchResult]:
+    def search(self, question: str, top_k: int, section_filter: str | None = None) -> list[SearchResult]:
         if not self.chunks:
             return []
 
@@ -158,7 +159,11 @@ class RagStore:
         else:
             return []
 
-        ranked_indexes = scores.argsort()[::-1][:top_k]
+        allowed_indexes = self._allowed_chunk_indexes(section_filter)
+        if not allowed_indexes:
+            return []
+
+        ranked_indexes = sorted(allowed_indexes, key=lambda index: scores[index], reverse=True)[:top_k]
 
         return [
             SearchResult(chunk=self.chunks[index], score=float(scores[index]))
@@ -277,6 +282,7 @@ class RagStore:
                     "page": chunk.page,
                     "chunk_id": chunk.chunk_id,
                     "text": chunk.text,
+                    "section": chunk.section,
                 }
                 for chunk in self.chunks
             ],
@@ -303,17 +309,20 @@ class RagStore:
     ) -> list[Chunk]:
         chunks: list[Chunk] = []
 
+        current_section = "unknown"
         for page_number, page_text in enumerate(pages, start=1):
             normalized = self._normalize_text(page_text)
             if not normalized:
                 continue
 
+            section_markers = self._section_markers(normalized)
             start = 0
             part = 1
             while start < len(normalized):
                 end = min(start + chunk_size, len(normalized))
                 text = normalized[start:end].strip()
                 if text:
+                    section = self._section_for_offset(section_markers, start, current_section)
                     chunks.append(
                         Chunk(
                             document_id=document_id,
@@ -321,14 +330,84 @@ class RagStore:
                             page=page_number,
                             chunk_id=f"{document_id}-p{page_number}-c{part}",
                             text=text,
+                            section=section,
                         )
                     )
+                    current_section = section
                 if end == len(normalized):
                     break
                 start = max(end - overlap, start + 1)
                 part += 1
 
         return chunks
+
+    def _allowed_chunk_indexes(self, section_filter: str | None) -> list[int]:
+        section = self._normalize_section_filter(section_filter)
+        if section is None:
+            return list(range(len(self.chunks)))
+        return [index for index, chunk in enumerate(self.chunks) if chunk.section == section]
+
+    def _normalize_section_filter(self, section_filter: str | None) -> str | None:
+        if not section_filter:
+            return None
+        value = section_filter.strip().lower().replace("-", "_").replace(" ", "_")
+        if value in {"all", "any", "*"}:
+            return None
+        aliases = {
+            "abstract": "abstract",
+            "introduction": "introduction",
+            "intro": "introduction",
+            "related": "related_work",
+            "related_work": "related_work",
+            "literature_review": "related_work",
+            "method": "methods",
+            "methods": "methods",
+            "methodology": "methods",
+            "approach": "methods",
+            "experiment": "experiments",
+            "experiments": "experiments",
+            "evaluation": "experiments",
+            "result": "results",
+            "results": "results",
+            "discussion": "discussion",
+            "conclusion": "conclusion",
+            "conclusions": "conclusion",
+            "references": "references",
+            "reference": "references",
+            "unknown": "unknown",
+        }
+        return aliases.get(value, value)
+
+    def _section_markers(self, text: str) -> list[tuple[int, str]]:
+        patterns = [
+            ("abstract", r"\babstract\b"),
+            ("introduction", r"(?:^|\s)(?:1\.?\s*)?introduction\b"),
+            ("related_work", r"\b(?:related work|literature review|background)\b"),
+            ("methods", r"\b(?:method|methods|methodology|materials and methods|proposed method|approach)\b"),
+            ("experiments", r"\b(?:experiment|experiments|experimental setup|evaluation|dataset|datasets)\b"),
+            ("results", r"\b(?:result|results|performance comparison)\b"),
+            ("discussion", r"\bdiscussion\b"),
+            ("conclusion", r"\b(?:conclusion|conclusions)\b"),
+            ("references", r"\b(?:references|bibliography)\b"),
+        ]
+        markers: list[tuple[int, str]] = []
+        for section, pattern in patterns:
+            for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+                markers.append((match.start(), section))
+        return sorted(markers, key=lambda item: item[0])
+
+    def _section_for_offset(
+        self,
+        markers: list[tuple[int, str]],
+        offset: int,
+        fallback: str,
+    ) -> str:
+        section = fallback
+        for marker_offset, marker_section in markers:
+            if marker_offset > offset:
+                break
+            section = marker_section
+        return section
 
     def _safe_filename(self, filename: str) -> str:
         name = Path(filename).name.strip() or "document.pdf"

@@ -33,6 +33,7 @@ class DocumentIngestResponse(BaseModel):
 class QueryRequest(BaseModel):
     question: str = Field(min_length=1)
     top_k: int = Field(default=4, ge=1, le=10)
+    section_filter: str | None = None
 
 
 class SourceChunk(BaseModel):
@@ -42,6 +43,7 @@ class SourceChunk(BaseModel):
     chunk_id: str
     score: float
     text: str
+    section: str = "unknown"
 
 
 class QueryResponse(BaseModel):
@@ -65,6 +67,7 @@ class StudyRequest(BaseModel):
     topic: str = Field(default="这些文档", min_length=1)
     focus: str | None = None
     top_k: int = Field(default=6, ge=1, le=12)
+    section_filter: str | None = None
 
 
 class StudyResponse(BaseModel):
@@ -82,6 +85,7 @@ class LiteratureRequest(BaseModel):
     focus: str | None = None
     top_k_documents: int = Field(default=5, ge=1, le=10)
     evidence_k: int = Field(default=18, ge=3, le=40)
+    section_filter: str | None = None
 
 
 class PaperCandidate(BaseModel):
@@ -93,6 +97,7 @@ class PaperCandidate(BaseModel):
     score: float
     evidence_count: int
     evidence_pages: list[int]
+    evidence_sections: list[str] = Field(default_factory=list)
     preview: str
 
 

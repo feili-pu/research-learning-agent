@@ -17,6 +17,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -264,9 +265,10 @@ h2 {
   grid-template-columns:
     minmax(0, 1.1fr)
     minmax(0, 1fr)
-    minmax(140px, 180px)
-    minmax(140px, 180px)
-    112px;
+    minmax(120px, 150px)
+    minmax(130px, 160px)
+    minmax(130px, 160px)
+    104px;
 }
 
 .field {
@@ -285,6 +287,7 @@ h2 {
 }
 
 .field input,
+.field select,
 .field textarea {
   width: 100%;
   min-height: 40px;

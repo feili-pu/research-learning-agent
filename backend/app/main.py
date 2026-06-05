@@ -25,7 +25,7 @@ from .study import StudyService
 app = FastAPI(
     title="Research Learning Agent",
     description="Local RAG API for learning from uploaded PDFs.",
-    version="0.10.0",
+    version="0.11.0",
 )
 
 store = RagStore(upload_dir=Path("data/uploads"))
@@ -78,7 +78,7 @@ def enrich_document_metadata() -> list[DocumentSummary]:
 
 @app.post("/query", response_model=QueryResponse)
 def query_documents(request: QueryRequest) -> QueryResponse:
-    results = store.search(request.question, request.top_k)
+    results = store.search(request.question, request.top_k, request.section_filter)
     answer = answerer.answer(request.question, results)
 
     return QueryResponse(
@@ -95,6 +95,7 @@ def query_documents(request: QueryRequest) -> QueryResponse:
                 chunk_id=result.chunk.chunk_id,
                 score=result.score,
                 text=result.chunk.text,
+                section=result.chunk.section,
             )
             for result in results
         ],

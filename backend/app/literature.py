@@ -17,7 +17,7 @@ class LiteratureService:
         self.answerer = answerer
 
     def search(self, request: LiteratureRequest) -> LiteratureSearchResponse:
-        results = self.store.search(self._search_query(request), request.evidence_k)
+        results = self.store.search(self._search_query(request), request.evidence_k, request.section_filter)
         papers = self._rank_papers(results, request.top_k_documents)
         filtered_results = self._filter_results_to_papers(results, papers)
         return LiteratureSearchResponse(
@@ -68,7 +68,7 @@ class LiteratureService:
         request: LiteratureRequest,
         prompt: str,
     ) -> LiteratureReviewResponse:
-        results = self.store.search(self._search_query(request), request.evidence_k)
+        results = self.store.search(self._search_query(request), request.evidence_k, request.section_filter)
         papers = self._rank_papers(results, request.top_k_documents)
         filtered_results = self._filter_results_to_papers(results, papers)
         answer = self.answerer.answer(prompt, filtered_results)
@@ -95,10 +95,12 @@ class LiteratureService:
         instruction: str,
     ) -> str:
         focus = f"\n关注重点：{request.focus}" if request.focus else ""
+        section = f"\n章节范围：{request.section_filter}" if request.section_filter else ""
         return (
             f"任务：{task}\n"
             f"研究方向：{request.query}"
             f"{focus}\n"
+            f"{section}"
             f"要求：{instruction}\n"
             "回答时必须基于给定来源，并用 [1]、[2] 这样的编号引用证据。"
         )
@@ -121,6 +123,7 @@ class LiteratureService:
             sorted_results = sorted(document_results, key=lambda item: item.score, reverse=True)
             score = sum(item.score for item in sorted_results[:3])
             pages = sorted({item.chunk.page for item in sorted_results})
+            sections = sorted({item.chunk.section for item in sorted_results if item.chunk.section})
             preview = self._shorten(sorted_results[0].chunk.text, max_chars=260)
             candidates.append(
                 PaperCandidate(
@@ -132,6 +135,7 @@ class LiteratureService:
                     score=round(float(score), 6),
                     evidence_count=len(document_results),
                     evidence_pages=pages[:8],
+                    evidence_sections=sections[:8],
                     preview=preview,
                 )
             )
@@ -155,6 +159,7 @@ class LiteratureService:
                 chunk_id=result.chunk.chunk_id,
                 score=result.score,
                 text=result.chunk.text,
+                section=result.chunk.section,
             )
             for result in results
         ]
