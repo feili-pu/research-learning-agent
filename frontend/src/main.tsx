@@ -121,11 +121,11 @@ function App() {
   async function handleEnrichMetadata() {
     setBusy(true);
     setError("");
-    setStatus("正在用 Crossref 刷新元数据");
+    setStatus("正在用 Crossref / Semantic Scholar 刷新元数据");
     try {
       const docs = await enrichMetadata();
       setDocuments(docs);
-      setStatus("Crossref 元数据已刷新");
+      setStatus("Crossref / Semantic Scholar 元数据已刷新");
     } catch (err) {
       setError(String(err));
       setStatus("元数据刷新失败");
@@ -189,7 +189,7 @@ function App() {
             <div className="panel-heading">
               <h2>后台论文库</h2>
               <div className="panel-actions">
-                <button className="icon-button" onClick={handleEnrichMetadata} disabled={busy} title="用 Crossref 刷新元数据">
+                <button className="icon-button" onClick={handleEnrichMetadata} disabled={busy} title="用 Crossref / Semantic Scholar 刷新元数据">
                   <FileSearch size={17} />
                 </button>
                 <button className="icon-button" onClick={handleReindex} disabled={busy} title="重新索引">
