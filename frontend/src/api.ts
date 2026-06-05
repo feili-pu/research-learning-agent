@@ -5,6 +5,11 @@ export type PaperMetadata = {
   venue: string | null;
   doi: string | null;
   abstract: string | null;
+  publisher: string | null;
+  external_url: string | null;
+  reference_count: number | null;
+  metadata_source: string;
+  is_enriched: boolean;
   keywords: string[];
   duplicate_of: string | null;
   duplicate_reason: string | null;
@@ -88,6 +93,10 @@ export function getDocuments() {
 
 export function reindexDocuments() {
   return request<DocumentSummary[]>("/documents/reindex", { method: "POST" });
+}
+
+export function enrichMetadata() {
+  return request<DocumentSummary[]>("/documents/enrich-metadata", { method: "POST" });
 }
 
 export function uploadDocument(file: File) {

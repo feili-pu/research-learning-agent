@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import {
   BookOpen,
   DatabaseZap,
+  FileSearch,
   FileText,
   Layers,
   Library,
@@ -18,6 +19,7 @@ import {
 import {
   askQuestion,
   DocumentSummary,
+  enrichMetadata,
   getDocuments,
   LiteratureReviewResponse,
   LiteratureSearchResponse,
@@ -116,6 +118,22 @@ function App() {
     }
   }
 
+  async function handleEnrichMetadata() {
+    setBusy(true);
+    setError("");
+    setStatus("正在用 Crossref 刷新元数据");
+    try {
+      const docs = await enrichMetadata();
+      setDocuments(docs);
+      setStatus("Crossref 元数据已刷新");
+    } catch (err) {
+      setError(String(err));
+      setStatus("元数据刷新失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleRun() {
     setBusy(true);
     setError("");
@@ -170,9 +188,14 @@ function App() {
           <section className="panel">
             <div className="panel-heading">
               <h2>后台论文库</h2>
-              <button className="icon-button" onClick={handleReindex} disabled={busy} title="重新索引">
-                <RefreshCw size={17} />
-              </button>
+              <div className="panel-actions">
+                <button className="icon-button" onClick={handleEnrichMetadata} disabled={busy} title="用 Crossref 刷新元数据">
+                  <FileSearch size={17} />
+                </button>
+                <button className="icon-button" onClick={handleReindex} disabled={busy} title="重新索引">
+                  <RefreshCw size={17} />
+                </button>
+              </div>
             </div>
             <label className="upload-zone">
               <Upload size={22} />
@@ -190,6 +213,7 @@ function App() {
                   <div>
                     <strong>{displayTitle(doc)}</strong>
                     <span>{metadataLine(doc.metadata)} · {doc.pages} 页 · {doc.chunks} chunks</span>
+                    <span>{sourceLine(doc.metadata)}</span>
                     <small>{doc.filename}</small>
                     {doc.metadata.duplicate_of && <em>疑似重复：{doc.metadata.duplicate_reason}</em>}
                   </div>
@@ -338,6 +362,7 @@ function PaperList({ papers }: { papers: PaperCandidate[] }) {
                 {paper.evidence_pages.join(", ")} 页
               </span>
               {paper.metadata.doi && <span>DOI {paper.metadata.doi}</span>}
+              <span>{sourceLine(paper.metadata)}</span>
               {paper.metadata.duplicate_of && <em>疑似重复：{paper.metadata.duplicate_reason}</em>}
               <p>{paper.metadata.abstract || paper.preview}</p>
               <small>{paper.filename}</small>
@@ -386,6 +411,22 @@ function metadataLine(metadata: {
     return metadata.keywords.slice(0, 3).join(" · ");
   }
   return "metadata pending";
+}
+
+function sourceLine(metadata: {
+  metadata_source: string;
+  publisher: string | null;
+  reference_count: number | null;
+  external_url: string | null;
+  is_enriched: boolean;
+}) {
+  const parts = [
+    metadata.is_enriched ? `source ${metadata.metadata_source}` : "source local",
+    metadata.publisher,
+    metadata.reference_count !== null ? `${metadata.reference_count} refs` : null,
+    metadata.external_url
+  ].filter(Boolean);
+  return parts.join(" · ");
 }
 
 createRoot(document.getElementById("root")!).render(

@@ -158,6 +158,38 @@ same filename
 
 注意：V8 暂时不调用外部元数据服务。元数据提取是本地启发式规则，所以少数 PDF 的作者、摘要或关键词可能还不完美。后续可以接入 Crossref、Semantic Scholar 或 arXiv 做增强。
 
+### V9：Crossref DOI 元数据增强
+
+V9 增加了 Crossref DOI 元数据增强。
+
+如果本地 PDF 解析已经提取到了 DOI，后端可以调用 Crossref Works API，用 DOI 查询官方登记信息，并补全或修正：
+
+```text
+标题
+作者
+年份
+期刊/会议
+出版社
+DOI
+官方链接
+参考文献数量
+学科/关键词
+Crossref 提供的摘要
+```
+
+V9 新增接口：
+
+```text
+POST /documents/enrich-metadata
+```
+
+前端论文库中新增了一个 Crossref 刷新按钮。元数据现在还会包含：
+
+```text
+metadata_source: local 或 crossref
+is_enriched: true 或 false
+```
+
 ## 项目结构
 
 ```text
@@ -268,6 +300,14 @@ POST /documents/reindex
 
 该接口会扫描 `data/uploads/` 中已有 PDF，重新抽取文本、重建 chunks、刷新语义索引，并重新提取元数据和重复标记。
 
+### 用 Crossref 刷新元数据
+
+```text
+POST /documents/enrich-metadata
+```
+
+该接口会对已经有 DOI 的论文调用 Crossref，尝试用官方元数据补全论文信息。
+
 ### 自由问答
 
 ```text
@@ -342,9 +382,20 @@ PDF 上传或重新索引
   -> 前端以论文卡片形式展示，而不是只显示 PDF 文件名
 ```
 
+## V9 工作流程
+
+```text
+已有 DOI 的论文元数据
+  -> 通过 DOI 调用 Crossref Works API
+  -> 映射官方标题、作者、年份、venue、publisher、URL 和 reference count
+  -> 将 metadata_source 标记为 crossref
+  -> 保存增强后的元数据到 data/index/rag_store.json
+  -> 前端展示增强来源和更准确的文献信息
+```
+
 ## 下一步计划
 
-1. 接入 Crossref、Semantic Scholar 或 arXiv 做外部元数据增强。
+1. 接入 Semantic Scholar，用标题搜索补全没有 DOI 的论文。
 2. 增加章节感知检索，区分 Abstract、Methods、Results、Conclusion。
 3. 给论文库增加年份、DOI、重复状态、关键词筛选。
 4. 增加方向级检索质量评估数据。

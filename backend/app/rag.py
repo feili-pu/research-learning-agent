@@ -32,6 +32,11 @@ class PaperMetadata:
     venue: str | None = None
     doi: str | None = None
     abstract: str | None = None
+    publisher: str | None = None
+    external_url: str | None = None
+    reference_count: int | None = None
+    metadata_source: str = "local"
+    is_enriched: bool = False
     keywords: list[str] = field(default_factory=list)
     duplicate_of: str | None = None
     duplicate_reason: str | None = None
@@ -124,6 +129,19 @@ class RagStore:
         self._mark_duplicates()
         self._save_store()
         self._rebuild_index()
+        return self.list_documents()
+
+    def enrich_metadata(self, client) -> list[Document]:
+        for document in self.documents.values():
+            if not document.metadata.doi:
+                continue
+            work = client.fetch_by_doi(document.metadata.doi)
+            if work is None:
+                continue
+            self._apply_external_metadata(document.metadata, work)
+
+        self._mark_duplicates()
+        self._save_store()
         return self.list_documents()
 
     def search(self, question: str, top_k: int) -> list[SearchResult]:
@@ -233,6 +251,11 @@ class RagStore:
                         "venue": document.metadata.venue,
                         "doi": document.metadata.doi,
                         "abstract": document.metadata.abstract,
+                        "publisher": document.metadata.publisher,
+                        "external_url": document.metadata.external_url,
+                        "reference_count": document.metadata.reference_count,
+                        "metadata_source": document.metadata.metadata_source,
+                        "is_enriched": document.metadata.is_enriched,
                         "keywords": document.metadata.keywords,
                         "duplicate_of": document.metadata.duplicate_of,
                         "duplicate_reason": document.metadata.duplicate_reason,
@@ -334,6 +357,20 @@ class RagStore:
             abstract=abstract,
             keywords=self._extract_keywords(normalized),
         )
+
+    def _apply_external_metadata(self, metadata: PaperMetadata, work) -> None:
+        metadata.title = work.title or metadata.title
+        metadata.authors = work.authors or metadata.authors
+        metadata.year = work.year or metadata.year
+        metadata.venue = work.venue or metadata.venue
+        metadata.doi = work.doi or metadata.doi
+        metadata.abstract = work.abstract or metadata.abstract
+        metadata.publisher = work.publisher or metadata.publisher
+        metadata.external_url = work.external_url or metadata.external_url
+        metadata.reference_count = work.reference_count if work.reference_count is not None else metadata.reference_count
+        metadata.keywords = work.keywords or metadata.keywords
+        metadata.metadata_source = "crossref"
+        metadata.is_enriched = True
 
     def _extract_title(self, filename: str, raw_text: str, normalized: str) -> str:
         lines = [self._normalize_text(line) for line in raw_text.splitlines()]
@@ -490,6 +527,11 @@ class RagStore:
             venue=data.get("venue"),
             doi=data.get("doi"),
             abstract=data.get("abstract"),
+            publisher=data.get("publisher"),
+            external_url=data.get("external_url"),
+            reference_count=data.get("reference_count"),
+            metadata_source=data.get("metadata_source", "local"),
+            is_enriched=bool(data.get("is_enriched", False)),
             keywords=list(data.get("keywords", [])),
             duplicate_of=data.get("duplicate_of"),
             duplicate_reason=data.get("duplicate_reason"),

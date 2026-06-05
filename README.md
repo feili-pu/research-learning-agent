@@ -151,6 +151,38 @@ The frontend now shows paper titles, DOI, year, abstract previews, and duplicate
 
 V8 does not call external metadata services yet. Metadata extraction is intentionally local and heuristic, so some PDFs with unusual layouts may still need future enrichment through Crossref, Semantic Scholar, or arXiv.
 
+### V9
+
+V9 adds Crossref DOI metadata enrichment.
+
+If a paper already has a DOI from local PDF parsing, the backend can call the public Crossref Works API and use the returned record to improve:
+
+```text
+title
+authors
+year
+venue
+publisher
+DOI
+external URL
+reference count
+subjects/keywords
+abstract when Crossref provides one
+```
+
+New V9 endpoint:
+
+```text
+POST /documents/enrich-metadata
+```
+
+The frontend includes a Crossref refresh button in the paper library. Metadata records now include:
+
+```text
+metadata_source: local or crossref
+is_enriched: true or false
+```
+
 ## Project Structure
 
 ```text
@@ -264,6 +296,14 @@ This scans existing PDF files in `data/uploads/`, extracts their text again, reb
 
 In V8, reindexing also refreshes local paper metadata and duplicate markers.
 
+### Enrich Metadata With Crossref
+
+```text
+POST /documents/enrich-metadata
+```
+
+This tries to enrich existing paper metadata through Crossref for documents that have a DOI.
+
 ### Ask A Question
 
 ```text
@@ -375,10 +415,21 @@ PDF upload or reindex
   -> frontend renders paper cards instead of raw PDF filenames
 ```
 
+## How V9 Works
+
+```text
+existing paper metadata with DOI
+  -> call Crossref Works API by DOI
+  -> map official title, authors, year, venue, publisher, URL, and reference count
+  -> mark metadata_source as crossref
+  -> persist enriched metadata in data/index/rag_store.json
+  -> frontend displays the enriched source and bibliographic fields
+```
+
 ## Next Milestones
 
 1. Add external metadata enrichment through Crossref, Semantic Scholar, or arXiv.
-2. Add section-aware retrieval for Abstract, Methods, Results, and Conclusion.
-3. Add library filters by year, DOI, duplicate status, and keyword.
-4. Add evaluation data for direction-level retrieval quality.
+2. Add Semantic Scholar title search for papers without DOI.
+3. Add section-aware retrieval for Abstract, Methods, Results, and Conclusion.
+4. Add library filters by year, DOI, duplicate status, and keyword.
 5. Add Agent tools for arXiv, Semantic Scholar, and GitHub.

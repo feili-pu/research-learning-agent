@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, UploadFile
 
 from .answerer import Answerer
+from .crossref import CrossrefClient
 from .literature import LiteratureService
 from .rag import RagStore
 from .schemas import (
@@ -23,7 +24,7 @@ from .study import StudyService
 app = FastAPI(
     title="Research Learning Agent",
     description="Local RAG API for learning from uploaded PDFs.",
-    version="0.8.0",
+    version="0.9.0",
 )
 
 store = RagStore(upload_dir=Path("data/uploads"))
@@ -64,6 +65,12 @@ def list_documents() -> list[DocumentSummary]:
 @app.post("/documents/reindex", response_model=list[DocumentSummary])
 def reindex_documents() -> list[DocumentSummary]:
     return [_document_summary(document) for document in store.reindex_uploads()]
+
+
+@app.post("/documents/enrich-metadata", response_model=list[DocumentSummary])
+def enrich_document_metadata() -> list[DocumentSummary]:
+    client = CrossrefClient()
+    return [_document_summary(document) for document in store.enrich_metadata(client)]
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -144,6 +151,11 @@ def _paper_metadata(metadata) -> PaperMetadata:
         venue=metadata.venue,
         doi=metadata.doi,
         abstract=metadata.abstract,
+        publisher=metadata.publisher,
+        external_url=metadata.external_url,
+        reference_count=metadata.reference_count,
+        metadata_source=metadata.metadata_source,
+        is_enriched=metadata.is_enriched,
         keywords=metadata.keywords,
         duplicate_of=metadata.duplicate_of,
         duplicate_reason=metadata.duplicate_reason,

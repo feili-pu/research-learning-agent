@@ -8,6 +8,11 @@ class PaperMetadata(BaseModel):
     venue: str | None = None
     doi: str | None = None
     abstract: str | None = None
+    publisher: str | None = None
+    external_url: str | None = None
+    reference_count: int | None = None
+    metadata_source: str = "local"
+    is_enriched: bool = False
     keywords: list[str] = Field(default_factory=list)
     duplicate_of: str | None = None
     duplicate_reason: str | None = None

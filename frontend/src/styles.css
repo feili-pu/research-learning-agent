@@ -136,6 +136,11 @@ h2 {
   margin-bottom: 12px;
 }
 
+.panel-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
 .icon-button {
   width: 34px;
   height: 34px;

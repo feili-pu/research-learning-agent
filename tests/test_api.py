@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.answerer import Answerer
 from backend.app import main
+from backend.app.crossref import CrossrefWork
 from backend.app.literature import LiteratureService
 from backend.app.rag import RagStore
 from backend.app.schemas import LiteratureRequest, StudyRequest
@@ -299,6 +300,84 @@ def test_documents_endpoint_returns_metadata(monkeypatch, tmp_path: Path) -> Non
     data = response.json()
     assert data[0]["metadata"]["title"]
     assert "duplicate_of" in data[0]["metadata"]
+
+
+def test_crossref_enrichment_updates_metadata(tmp_path: Path) -> None:
+    class FakeCrossrefClient:
+        def fetch_by_doi(self, doi: str):
+            return CrossrefWork(
+                title="Official Crossref Title",
+                authors="Alice Zhang, Bob Li",
+                year=2026,
+                venue="Journal of Reliable Metadata",
+                doi=doi.upper(),
+                abstract="Official abstract from Crossref.",
+                publisher="Test Publisher",
+                external_url="https://doi.org/10.1234/example.2026.001",
+                reference_count=42,
+                keywords=["metadata", "crossref"],
+            )
+
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    document = store.ingest_pdf(
+        "crossref.pdf",
+        make_pdf_with_text("Local Title Abstract doi 10.1234/example.2026.001 Keywords local Introduction text."),
+    )
+
+    documents = store.enrich_metadata(FakeCrossrefClient())
+    metadata = documents[0].metadata
+
+    assert documents[0].document_id == document.document_id
+    assert metadata.title == "Official Crossref Title"
+    assert metadata.authors == "Alice Zhang, Bob Li"
+    assert metadata.year == 2026
+    assert metadata.venue == "Journal of Reliable Metadata"
+    assert metadata.publisher == "Test Publisher"
+    assert metadata.external_url == "https://doi.org/10.1234/example.2026.001"
+    assert metadata.reference_count == 42
+    assert metadata.metadata_source == "crossref"
+    assert metadata.is_enriched is True
+    assert metadata.keywords == ["metadata", "crossref"]
+
+
+def test_enrich_metadata_endpoint_uses_crossref_client(monkeypatch, tmp_path: Path) -> None:
+    class FakeCrossrefClient:
+        def fetch_by_doi(self, doi: str):
+            return CrossrefWork(
+                title="Endpoint Enriched Title",
+                authors="Endpoint Author",
+                year=2025,
+                venue="Endpoint Venue",
+                doi=doi,
+                publisher="Endpoint Publisher",
+                external_url="https://doi.org/10.5555/endpoint",
+                reference_count=7,
+            )
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(main, "CrossrefClient", lambda: FakeCrossrefClient())
+    main.store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    main.answerer = Answerer()
+    client = TestClient(main.app)
+    client.post(
+        "/documents/upload",
+        files={
+            "file": (
+                "endpoint.pdf",
+                make_pdf_with_text("Endpoint Paper Abstract doi 10.5555/endpoint Keywords test Introduction text."),
+                "application/pdf",
+            )
+        },
+    )
+
+    response = client.post("/documents/enrich-metadata")
+
+    assert response.status_code == 200
+    metadata = response.json()[0]["metadata"]
+    assert metadata["title"] == "Endpoint Enriched Title"
+    assert metadata["metadata_source"] == "crossref"
+    assert metadata["is_enriched"] is True
+    assert metadata["reference_count"] == 7
 
 
 def test_study_summary_endpoint(monkeypatch, tmp_path: Path) -> None:
