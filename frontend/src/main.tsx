@@ -417,13 +417,19 @@ function sourceLine(metadata: {
   metadata_source: string;
   publisher: string | null;
   reference_count: number | null;
+  citation_count: number | null;
+  metadata_confidence: string;
+  metadata_match_score: number | null;
   external_url: string | null;
   is_enriched: boolean;
 }) {
   const parts = [
     metadata.is_enriched ? `source ${metadata.metadata_source}` : "source local",
+    metadata.metadata_confidence !== "local" ? `confidence ${metadata.metadata_confidence}` : null,
     metadata.publisher,
     metadata.reference_count !== null ? `${metadata.reference_count} refs` : null,
+    metadata.citation_count !== null ? `${metadata.citation_count} citations` : null,
+    metadata.metadata_match_score !== null ? `match ${metadata.metadata_match_score.toFixed(2)}` : null,
     metadata.external_url
   ].filter(Boolean);
   return parts.join(" · ");

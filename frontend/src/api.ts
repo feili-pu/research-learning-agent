@@ -8,6 +8,10 @@ export type PaperMetadata = {
   publisher: string | null;
   external_url: string | null;
   reference_count: number | null;
+  citation_count: number | null;
+  fields_of_study: string[];
+  metadata_confidence: string;
+  metadata_match_score: number | null;
   metadata_source: string;
   is_enriched: boolean;
   keywords: string[];

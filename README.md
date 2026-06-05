@@ -183,6 +183,37 @@ metadata_source: local or crossref
 is_enriched: true or false
 ```
 
+### V10
+
+V10 adds Semantic Scholar title-search fallback for metadata enrichment.
+
+The enrichment endpoint still tries Crossref first when a DOI is available. If the paper has no DOI, or Crossref cannot find a usable record, the backend searches Semantic Scholar by paper title and accepts the best result only when the title similarity is high enough.
+
+V10 can enrich papers without DOI with:
+
+```text
+title
+authors
+year
+venue
+DOI when Semantic Scholar exposes one
+abstract
+official URL
+reference count
+citation count
+fields of study
+metadata confidence
+title match score
+```
+
+Metadata records now support:
+
+```text
+metadata_source: local, crossref, or semantic_scholar
+metadata_confidence: local, low, medium, or high
+metadata_match_score: similarity score for Semantic Scholar title matching
+```
+
 ## Project Structure
 
 ```text
@@ -303,6 +334,8 @@ POST /documents/enrich-metadata
 ```
 
 This tries to enrich existing paper metadata through Crossref for documents that have a DOI.
+
+If Crossref cannot enrich a paper, V10 falls back to Semantic Scholar title search for papers that have a usable title.
 
 ### Ask A Question
 
@@ -426,10 +459,22 @@ existing paper metadata with DOI
   -> frontend displays the enriched source and bibliographic fields
 ```
 
+## How V10 Works
+
+```text
+existing paper metadata
+  -> try Crossref by DOI first when DOI is available
+  -> if Crossref has no usable match, search Semantic Scholar by title
+  -> compare the returned title with the local title
+  -> accept only matches above the similarity threshold
+  -> save source, confidence, citation count, fields of study, and match score
+  -> frontend displays the enriched source and confidence information
+```
+
 ## Next Milestones
 
-1. Add external metadata enrichment through Crossref, Semantic Scholar, or arXiv.
-2. Add Semantic Scholar title search for papers without DOI.
-3. Add section-aware retrieval for Abstract, Methods, Results, and Conclusion.
-4. Add library filters by year, DOI, duplicate status, and keyword.
-5. Add Agent tools for arXiv, Semantic Scholar, and GitHub.
+1. Add section-aware retrieval for Abstract, Methods, Results, and Conclusion.
+2. Add library filters by year, DOI, duplicate status, source, and keyword.
+3. Add evaluation data for direction-level retrieval quality.
+4. Add Agent tools for arXiv, Semantic Scholar, and GitHub.
+5. Add paper comparison workflows.

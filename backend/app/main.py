@@ -6,6 +6,7 @@ from .answerer import Answerer
 from .crossref import CrossrefClient
 from .literature import LiteratureService
 from .rag import RagStore
+from .semantic_scholar import SemanticScholarClient
 from .schemas import (
     DocumentIngestResponse,
     DocumentSummary,
@@ -24,7 +25,7 @@ from .study import StudyService
 app = FastAPI(
     title="Research Learning Agent",
     description="Local RAG API for learning from uploaded PDFs.",
-    version="0.9.0",
+    version="0.10.0",
 )
 
 store = RagStore(upload_dir=Path("data/uploads"))
@@ -69,8 +70,10 @@ def reindex_documents() -> list[DocumentSummary]:
 
 @app.post("/documents/enrich-metadata", response_model=list[DocumentSummary])
 def enrich_document_metadata() -> list[DocumentSummary]:
-    client = CrossrefClient()
-    return [_document_summary(document) for document in store.enrich_metadata(client)]
+    return [
+        _document_summary(document)
+        for document in store.enrich_metadata(CrossrefClient(), SemanticScholarClient())
+    ]
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -154,6 +157,10 @@ def _paper_metadata(metadata) -> PaperMetadata:
         publisher=metadata.publisher,
         external_url=metadata.external_url,
         reference_count=metadata.reference_count,
+        citation_count=metadata.citation_count,
+        fields_of_study=metadata.fields_of_study,
+        metadata_confidence=metadata.metadata_confidence,
+        metadata_match_score=metadata.metadata_match_score,
         metadata_source=metadata.metadata_source,
         is_enriched=metadata.is_enriched,
         keywords=metadata.keywords,

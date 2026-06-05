@@ -190,6 +190,37 @@ metadata_source: local 或 crossref
 is_enriched: true 或 false
 ```
 
+### V10：Semantic Scholar 标题检索 fallback
+
+V10 增加了 Semantic Scholar 标题检索 fallback。
+
+元数据增强接口仍然会优先使用 Crossref：如果论文有 DOI，就先用 DOI 去查 Crossref。若论文没有 DOI，或者 Crossref 没有返回可用记录，后端会用论文标题去 Semantic Scholar 搜索，并且只接受标题相似度足够高的结果。
+
+V10 可以为没有 DOI 的论文补全：
+
+```text
+标题
+作者
+年份
+期刊/会议
+Semantic Scholar 暴露的 DOI
+摘要
+官方链接
+参考文献数量
+引用数量
+研究领域
+元数据置信度
+标题匹配分数
+```
+
+元数据现在支持：
+
+```text
+metadata_source: local、crossref 或 semantic_scholar
+metadata_confidence: local、low、medium 或 high
+metadata_match_score: Semantic Scholar 标题匹配分数
+```
+
 ## 项目结构
 
 ```text
@@ -308,6 +339,8 @@ POST /documents/enrich-metadata
 
 该接口会对已经有 DOI 的论文调用 Crossref，尝试用官方元数据补全论文信息。
 
+如果 Crossref 无法补全某篇论文，V10 会继续用 Semantic Scholar 标题搜索作为 fallback。
+
 ### 自由问答
 
 ```text
@@ -393,10 +426,22 @@ PDF 上传或重新索引
   -> 前端展示增强来源和更准确的文献信息
 ```
 
+## V10 工作流程
+
+```text
+已有论文元数据
+  -> 有 DOI 时优先调用 Crossref
+  -> Crossref 没有可用结果时，用标题搜索 Semantic Scholar
+  -> 比较 Semantic Scholar 返回标题和本地标题的相似度
+  -> 只接受超过阈值的匹配结果
+  -> 保存来源、置信度、引用数量、研究领域和匹配分数
+  -> 前端展示增强来源和置信度信息
+```
+
 ## 下一步计划
 
-1. 接入 Semantic Scholar，用标题搜索补全没有 DOI 的论文。
-2. 增加章节感知检索，区分 Abstract、Methods、Results、Conclusion。
-3. 给论文库增加年份、DOI、重复状态、关键词筛选。
-4. 增加方向级检索质量评估数据。
-5. 增加 Agent 工具，让系统自动查 arXiv、Semantic Scholar 和 GitHub。
+1. 增加章节感知检索，区分 Abstract、Methods、Results、Conclusion。
+2. 给论文库增加年份、DOI、重复状态、来源、关键词筛选。
+3. 增加方向级检索质量评估数据。
+4. 增加 Agent 工具，让系统自动查 arXiv、Semantic Scholar 和 GitHub。
+5. 增加论文对比工作流。

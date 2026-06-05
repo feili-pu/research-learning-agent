@@ -35,6 +35,10 @@ class PaperMetadata:
     publisher: str | None = None
     external_url: str | None = None
     reference_count: int | None = None
+    citation_count: int | None = None
+    fields_of_study: list[str] = field(default_factory=list)
+    metadata_confidence: str = "local"
+    metadata_match_score: float | None = None
     metadata_source: str = "local"
     is_enriched: bool = False
     keywords: list[str] = field(default_factory=list)
@@ -131,14 +135,13 @@ class RagStore:
         self._rebuild_index()
         return self.list_documents()
 
-    def enrich_metadata(self, client) -> list[Document]:
+    def enrich_metadata(self, crossref_client, semantic_scholar_client=None) -> list[Document]:
         for document in self.documents.values():
-            if not document.metadata.doi:
-                continue
-            work = client.fetch_by_doi(document.metadata.doi)
+            work = crossref_client.fetch_by_doi(document.metadata.doi) if document.metadata.doi else None
             if work is None:
-                continue
-            self._apply_external_metadata(document.metadata, work)
+                work = self._semantic_scholar_fallback(document.metadata, semantic_scholar_client)
+            if work is not None:
+                self._apply_external_metadata(document.metadata, work)
 
         self._mark_duplicates()
         self._save_store()
@@ -254,6 +257,10 @@ class RagStore:
                         "publisher": document.metadata.publisher,
                         "external_url": document.metadata.external_url,
                         "reference_count": document.metadata.reference_count,
+                        "citation_count": document.metadata.citation_count,
+                        "fields_of_study": document.metadata.fields_of_study,
+                        "metadata_confidence": document.metadata.metadata_confidence,
+                        "metadata_match_score": document.metadata.metadata_match_score,
                         "metadata_source": document.metadata.metadata_source,
                         "is_enriched": document.metadata.is_enriched,
                         "keywords": document.metadata.keywords,
@@ -368,9 +375,18 @@ class RagStore:
         metadata.publisher = work.publisher or metadata.publisher
         metadata.external_url = work.external_url or metadata.external_url
         metadata.reference_count = work.reference_count if work.reference_count is not None else metadata.reference_count
+        metadata.citation_count = getattr(work, "citation_count", None) if getattr(work, "citation_count", None) is not None else metadata.citation_count
+        metadata.fields_of_study = getattr(work, "fields_of_study", []) or metadata.fields_of_study
         metadata.keywords = work.keywords or metadata.keywords
-        metadata.metadata_source = "crossref"
+        metadata.metadata_source = "semantic_scholar" if hasattr(work, "match_score") else "crossref"
+        metadata.metadata_confidence = getattr(work, "confidence", "high" if metadata.metadata_source == "crossref" else metadata.metadata_confidence)
+        metadata.metadata_match_score = getattr(work, "match_score", metadata.metadata_match_score)
         metadata.is_enriched = True
+
+    def _semantic_scholar_fallback(self, metadata: PaperMetadata, client):
+        if client is None or not metadata.title:
+            return None
+        return client.search_by_title(metadata.title)
 
     def _extract_title(self, filename: str, raw_text: str, normalized: str) -> str:
         lines = [self._normalize_text(line) for line in raw_text.splitlines()]
@@ -530,6 +546,10 @@ class RagStore:
             publisher=data.get("publisher"),
             external_url=data.get("external_url"),
             reference_count=data.get("reference_count"),
+            citation_count=data.get("citation_count"),
+            fields_of_study=list(data.get("fields_of_study", [])),
+            metadata_confidence=data.get("metadata_confidence", "local"),
+            metadata_match_score=data.get("metadata_match_score"),
             metadata_source=data.get("metadata_source", "local"),
             is_enriched=bool(data.get("is_enriched", False)),
             keywords=list(data.get("keywords", [])),

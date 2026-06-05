@@ -7,6 +7,7 @@ from backend.app import main
 from backend.app.crossref import CrossrefWork
 from backend.app.literature import LiteratureService
 from backend.app.rag import RagStore
+from backend.app.semantic_scholar import SemanticScholarClient, SemanticScholarWork
 from backend.app.schemas import LiteratureRequest, StudyRequest
 from backend.app.study import StudyService
 
@@ -338,6 +339,56 @@ def test_crossref_enrichment_updates_metadata(tmp_path: Path) -> None:
     assert metadata.metadata_source == "crossref"
     assert metadata.is_enriched is True
     assert metadata.keywords == ["metadata", "crossref"]
+
+
+def test_semantic_scholar_fallback_updates_metadata(tmp_path: Path) -> None:
+    class EmptyCrossrefClient:
+        def fetch_by_doi(self, doi: str):
+            return None
+
+    class FakeSemanticScholarClient:
+        def search_by_title(self, title: str):
+            return SemanticScholarWork(
+                title="Semantic Scholar Title",
+                authors="Semantic Author",
+                year=2024,
+                venue="Semantic Venue",
+                doi="10.9999/semantic",
+                abstract="Semantic abstract.",
+                external_url="https://www.semanticscholar.org/paper/test",
+                reference_count=12,
+                citation_count=34,
+                fields_of_study=["Computer Science", "Medicine"],
+                keywords=["Computer Science", "Medicine"],
+                confidence="high",
+                match_score=0.98,
+            )
+
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    store.ingest_pdf(
+        "semantic.pdf",
+        make_pdf_with_text("Semantic Local Title Abstract no doi Keywords local Introduction text."),
+    )
+
+    documents = store.enrich_metadata(EmptyCrossrefClient(), FakeSemanticScholarClient())
+    metadata = documents[0].metadata
+
+    assert metadata.title == "Semantic Scholar Title"
+    assert metadata.metadata_source == "semantic_scholar"
+    assert metadata.metadata_confidence == "high"
+    assert metadata.metadata_match_score == 0.98
+    assert metadata.citation_count == 34
+    assert metadata.fields_of_study == ["Computer Science", "Medicine"]
+
+
+def test_semantic_scholar_client_rejects_low_similarity() -> None:
+    client = SemanticScholarClient()
+    score = client._title_similarity("Graph retrieval augmented generation", "Unrelated medical imaging paper")
+
+    assert score < 0.72
+    assert client._confidence(0.96) == "high"
+    assert client._confidence(0.88) == "medium"
+    assert client._confidence(0.75) == "low"
 
 
 def test_enrich_metadata_endpoint_uses_crossref_client(monkeypatch, tmp_path: Path) -> None:

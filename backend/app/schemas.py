@@ -11,6 +11,10 @@ class PaperMetadata(BaseModel):
     publisher: str | None = None
     external_url: str | None = None
     reference_count: int | None = None
+    citation_count: int | None = None
+    fields_of_study: list[str] = Field(default_factory=list)
+    metadata_confidence: str = "local"
+    metadata_match_score: float | None = None
     metadata_source: str = "local"
     is_enriched: bool = False
     keywords: list[str] = Field(default_factory=list)
