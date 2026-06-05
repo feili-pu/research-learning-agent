@@ -13,6 +13,7 @@ The current version focuses on a local paper-learning workflow:
 5. Ask questions and return answers with source chunks.
 6. Generate study summaries, key points, and reading plans with an optional LLM.
 7. Use a scientific-style web frontend for daily testing.
+8. Manage the backend paper library with extracted metadata and duplicate markers.
 
 ## Version Notes
 
@@ -117,6 +118,36 @@ POST /literature/review
 POST /literature/methods
 POST /literature/details
 ```
+
+### V8
+
+V8 upgrades the backend PDF collection into a more usable paper library.
+
+When a PDF is uploaded or the library is reindexed, the system now tries to extract local paper metadata from the first pages:
+
+```text
+title
+authors
+year
+venue
+doi
+abstract
+keywords
+duplicate_of
+duplicate_reason
+```
+
+Duplicate detection currently uses simple local rules:
+
+```text
+same DOI
+same normalized title
+same filename
+```
+
+The frontend now shows paper titles, DOI, year, abstract previews, and duplicate markers in both the left paper library and the direction-level literature results.
+
+V8 does not call external metadata services yet. Metadata extraction is intentionally local and heuristic, so some PDFs with unusual layouts may still need future enrichment through Crossref, Semantic Scholar, or arXiv.
 
 ## Project Structure
 
@@ -229,6 +260,8 @@ POST /documents/reindex
 
 This scans existing PDF files in `data/uploads/`, extracts their text again, rebuilds chunks, saves `data/index/rag_store.json`, and refreshes the retrieval index.
 
+In V8, reindexing also refreshes local paper metadata and duplicate markers.
+
 ### Ask A Question
 
 ```text
@@ -328,10 +361,22 @@ research direction
   -> frontend displays paper ranking, answer, and evidence chunks
 ```
 
+## How V8 Works
+
+```text
+PDF upload or reindex
+  -> extract first-page text
+  -> infer title, authors, year, venue, DOI, abstract, and keywords
+  -> mark likely duplicate papers by DOI, title, or filename
+  -> persist metadata in data/index/rag_store.json
+  -> API returns metadata with documents and literature candidates
+  -> frontend renders paper cards instead of raw PDF filenames
+```
+
 ## Next Milestones
 
-1. Add paper metadata extraction such as title, authors, year, abstract, and venue.
-2. Add duplicate-paper detection.
-3. Add section-aware retrieval for Abstract, Methods, Results, and Conclusion.
+1. Add external metadata enrichment through Crossref, Semantic Scholar, or arXiv.
+2. Add section-aware retrieval for Abstract, Methods, Results, and Conclusion.
+3. Add library filters by year, DOI, duplicate status, and keyword.
 4. Add evaluation data for direction-level retrieval quality.
 5. Add Agent tools for arXiv, Semantic Scholar, and GitHub.

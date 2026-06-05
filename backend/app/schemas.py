@@ -1,11 +1,24 @@
 from pydantic import BaseModel, Field
 
 
+class PaperMetadata(BaseModel):
+    title: str | None = None
+    authors: str | None = None
+    year: int | None = None
+    venue: str | None = None
+    doi: str | None = None
+    abstract: str | None = None
+    keywords: list[str] = Field(default_factory=list)
+    duplicate_of: str | None = None
+    duplicate_reason: str | None = None
+
+
 class DocumentIngestResponse(BaseModel):
     document_id: str
     filename: str
     pages: int
     chunks: int
+    metadata: PaperMetadata
 
 
 class QueryRequest(BaseModel):
@@ -36,6 +49,7 @@ class DocumentSummary(BaseModel):
     filename: str
     pages: int
     chunks: int
+    metadata: "PaperMetadata"
 
 
 class StudyRequest(BaseModel):
@@ -66,6 +80,7 @@ class PaperCandidate(BaseModel):
     filename: str
     pages: int
     chunks: int
+    metadata: PaperMetadata
     score: float
     evidence_count: int
     evidence_pages: list[int]

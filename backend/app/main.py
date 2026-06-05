@@ -16,13 +16,14 @@ from .schemas import (
     SourceChunk,
     StudyRequest,
     StudyResponse,
+    PaperMetadata,
 )
 from .study import StudyService
 
 app = FastAPI(
     title="Research Learning Agent",
     description="Local RAG API for learning from uploaded PDFs.",
-    version="0.7.0",
+    version="0.8.0",
 )
 
 store = RagStore(upload_dir=Path("data/uploads"))
@@ -51,33 +52,18 @@ async def upload_document(file: UploadFile = File(...)) -> DocumentIngestRespons
         filename=document.filename,
         pages=document.pages,
         chunks=document.chunks,
+        metadata=_paper_metadata(document.metadata),
     )
 
 
 @app.get("/documents", response_model=list[DocumentSummary])
 def list_documents() -> list[DocumentSummary]:
-    return [
-        DocumentSummary(
-            document_id=document.document_id,
-            filename=document.filename,
-            pages=document.pages,
-            chunks=document.chunks,
-        )
-        for document in store.list_documents()
-    ]
+    return [_document_summary(document) for document in store.list_documents()]
 
 
 @app.post("/documents/reindex", response_model=list[DocumentSummary])
 def reindex_documents() -> list[DocumentSummary]:
-    return [
-        DocumentSummary(
-            document_id=document.document_id,
-            filename=document.filename,
-            pages=document.pages,
-            chunks=document.chunks,
-        )
-        for document in store.reindex_uploads()
-    ]
+    return [_document_summary(document) for document in store.reindex_uploads()]
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -138,3 +124,27 @@ def literature_methods(request: LiteratureRequest) -> LiteratureReviewResponse:
 @app.post("/literature/details", response_model=LiteratureReviewResponse)
 def literature_details(request: LiteratureRequest) -> LiteratureReviewResponse:
     return literature_service.details(request)
+
+
+def _document_summary(document) -> DocumentSummary:
+    return DocumentSummary(
+        document_id=document.document_id,
+        filename=document.filename,
+        pages=document.pages,
+        chunks=document.chunks,
+        metadata=_paper_metadata(document.metadata),
+    )
+
+
+def _paper_metadata(metadata) -> PaperMetadata:
+    return PaperMetadata(
+        title=metadata.title,
+        authors=metadata.authors,
+        year=metadata.year,
+        venue=metadata.venue,
+        doi=metadata.doi,
+        abstract=metadata.abstract,
+        keywords=metadata.keywords,
+        duplicate_of=metadata.duplicate_of,
+        duplicate_reason=metadata.duplicate_reason,
+    )

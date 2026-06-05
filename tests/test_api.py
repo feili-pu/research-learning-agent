@@ -240,6 +240,67 @@ def test_reindex_uploads_rebuilds_store(tmp_path: Path) -> None:
     assert results
 
 
+def test_metadata_extraction_finds_core_fields(tmp_path: Path) -> None:
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    pages = [
+        """
+        A Reliable Method for Water Quality Prediction
+        Alice Zhang, Bob Li
+        Journal of Environmental Intelligence 42 (2025) 100-120
+        https://doi.org/10.1016/j.example.2025.100120
+        Abstract This paper proposes a reliable method for water quality prediction using neural networks.
+        Keywords water quality; neural networks; prediction
+        1. Introduction Water quality prediction matters.
+        """
+    ]
+
+    metadata = store._extract_metadata("paper.pdf", pages)
+
+    assert metadata.title == "A Reliable Method for Water Quality Prediction"
+    assert metadata.authors == "Alice Zhang, Bob Li"
+    assert metadata.year == 2025
+    assert metadata.doi == "10.1016/j.example.2025.100120"
+    assert metadata.abstract.startswith("This paper proposes")
+    assert "water quality" in metadata.keywords
+
+
+def test_duplicate_detection_marks_same_doi(tmp_path: Path) -> None:
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    first = store.ingest_pdf(
+        "first.pdf",
+        make_pdf_with_text("First Study Abstract duplicate doi 10.1234/example.2025.001 Keywords test Introduction text."),
+    )
+    second = store.ingest_pdf(
+        "second.pdf",
+        make_pdf_with_text("Second Study Abstract duplicate doi 10.1234/example.2025.001 Keywords test Introduction text."),
+    )
+
+    assert store.documents[first.document_id].metadata.duplicate_of is None
+    assert store.documents[second.document_id].metadata.duplicate_of == first.document_id
+    assert store.documents[second.document_id].metadata.duplicate_reason == "same_doi"
+
+
+def test_documents_endpoint_returns_metadata(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    main.store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    main.answerer = Answerer()
+    client = TestClient(main.app)
+    pdf_bytes = make_pdf_with_text(
+        "Metadata Test Paper Abstract This paper has metadata. Keywords rag Introduction content."
+    )
+    client.post(
+        "/documents/upload",
+        files={"file": ("metadata.pdf", pdf_bytes, "application/pdf")},
+    )
+
+    response = client.get("/documents")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data[0]["metadata"]["title"]
+    assert "duplicate_of" in data[0]["metadata"]
+
+
 def test_study_summary_endpoint(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     main.store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")

@@ -128,6 +128,7 @@ class LiteratureService:
                     filename=document.filename,
                     pages=document.pages,
                     chunks=document.chunks,
+                    metadata=self._paper_metadata(document),
                     score=round(float(score), 6),
                     evidence_count=len(document_results),
                     evidence_pages=pages[:8],
@@ -162,3 +163,16 @@ class LiteratureService:
         if len(text) <= max_chars:
             return text
         return text[: max_chars - 3].rstrip() + "..."
+
+    def _paper_metadata(self, document) -> dict:
+        return {
+            "title": document.metadata.title,
+            "authors": document.metadata.authors,
+            "year": document.metadata.year,
+            "venue": document.metadata.venue,
+            "doi": document.metadata.doi,
+            "abstract": document.metadata.abstract,
+            "keywords": document.metadata.keywords,
+            "duplicate_of": document.metadata.duplicate_of,
+            "duplicate_reason": document.metadata.duplicate_reason,
+        }

@@ -1,8 +1,21 @@
+export type PaperMetadata = {
+  title: string | null;
+  authors: string | null;
+  year: number | null;
+  venue: string | null;
+  doi: string | null;
+  abstract: string | null;
+  keywords: string[];
+  duplicate_of: string | null;
+  duplicate_reason: string | null;
+};
+
 export type DocumentSummary = {
   document_id: string;
   filename: string;
   pages: number;
   chunks: number;
+  metadata: PaperMetadata;
 };
 
 export type SourceChunk = {
@@ -33,6 +46,7 @@ export type PaperCandidate = {
   filename: string;
   pages: number;
   chunks: number;
+  metadata: PaperMetadata;
   score: number;
   evidence_count: number;
   evidence_pages: number[];

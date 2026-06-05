@@ -188,8 +188,10 @@ function App() {
                 <article className="doc-row" key={doc.document_id}>
                   <FileText size={16} />
                   <div>
-                    <strong>{doc.filename}</strong>
-                    <span>{doc.pages} 页 · {doc.chunks} chunks</span>
+                    <strong>{displayTitle(doc)}</strong>
+                    <span>{metadataLine(doc.metadata)} · {doc.pages} 页 · {doc.chunks} chunks</span>
+                    <small>{doc.filename}</small>
+                    {doc.metadata.duplicate_of && <em>疑似重复：{doc.metadata.duplicate_reason}</em>}
                   </div>
                 </article>
               ))}
@@ -330,12 +332,15 @@ function PaperList({ papers }: { papers: PaperCandidate[] }) {
           <article className="paper-card" key={paper.document_id}>
             <div className="paper-rank">{index + 1}</div>
             <div>
-              <strong>{paper.filename}</strong>
+              <strong>{displayTitle(paper)}</strong>
               <span>
-                score {paper.score.toFixed(3)} · {paper.evidence_count} 个证据 · 第{" "}
+                {metadataLine(paper.metadata)} · score {paper.score.toFixed(3)} · {paper.evidence_count} 个证据 · 第{" "}
                 {paper.evidence_pages.join(", ")} 页
               </span>
-              <p>{paper.preview}</p>
+              {paper.metadata.doi && <span>DOI {paper.metadata.doi}</span>}
+              {paper.metadata.duplicate_of && <em>疑似重复：{paper.metadata.duplicate_reason}</em>}
+              <p>{paper.metadata.abstract || paper.preview}</p>
+              <small>{paper.filename}</small>
             </div>
           </article>
         ))}
@@ -357,6 +362,30 @@ function SourceItem({ source, index }: { source: SourceChunk; index: number }) {
       <small>{source.chunk_id}</small>
     </article>
   );
+}
+
+function displayTitle(item: { filename: string; metadata: { title: string | null } }) {
+  return item.metadata.title || item.filename;
+}
+
+function metadataLine(metadata: {
+  authors: string | null;
+  year: number | null;
+  venue: string | null;
+  keywords: string[];
+}) {
+  const parts = [
+    metadata.year ? String(metadata.year) : null,
+    metadata.venue,
+    metadata.authors
+  ].filter(Boolean);
+  if (parts.length) {
+    return parts.join(" · ");
+  }
+  if (metadata.keywords.length) {
+    return metadata.keywords.slice(0, 3).join(" · ");
+  }
+  return "metadata pending";
 }
 
 createRoot(document.getElementById("root")!).render(
