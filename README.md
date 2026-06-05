@@ -1,5 +1,7 @@
 # Research Learning Agent
 
+[中文文档](README.zh-CN.md)
+
 A small RAG project for learning from papers, course PDFs, and open-source project notes.
 
 ## Current Goal
