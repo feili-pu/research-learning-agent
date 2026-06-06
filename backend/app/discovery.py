@@ -3,6 +3,8 @@ import re
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
+import hashlib
 from html import unescape
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -45,6 +47,7 @@ class DiscoveryService:
     def search(self, request: DiscoveryRequest) -> DiscoveryResponse:
         source_names = self._normalize_sources(request.sources)
         query = self._search_query(request)
+        query_terms = self._query_terms(query)
         papers: list[DiscoveryPaper] = []
         errors: list[str] = []
 
@@ -64,7 +67,12 @@ class DiscoveryService:
                 except Exception as exc:
                     errors.append(f"{source}: {type(exc).__name__}")
                     continue
-                papers.extend(self._paper_from_result(result) for result in results if result.title)
+                for result in results:
+                    if not result.title:
+                        continue
+                    paper = self._paper_from_result(result, query_terms)
+                    if self._is_relevant(paper, query_terms):
+                        papers.append(paper)
 
         return DiscoveryResponse(
             query=request.query,
@@ -116,8 +124,9 @@ class DiscoveryService:
                 normalized.append(value)
         return normalized or ["semantic_scholar", "openalex"]
 
-    def _paper_from_result(self, result: ProviderResult) -> DiscoveryPaper:
+    def _paper_from_result(self, result: ProviderResult, query_terms: list[str]) -> DiscoveryPaper:
         imported = self._find_imported_document_id(result)
+        relevance_score = round((result.relevance_score * 0.35) + (self._keyword_score(result, query_terms) * 0.65), 4)
         return DiscoveryPaper(
             source=result.source,
             source_id=result.source_id,
@@ -134,9 +143,98 @@ class DiscoveryService:
             fields_of_study=result.fields_of_study,
             keywords=result.keywords,
             is_open_access=result.is_open_access,
-            relevance_score=result.relevance_score,
+            relevance_score=relevance_score,
             imported_document_id=imported,
         )
+
+    def _is_relevant(self, paper: DiscoveryPaper, query_terms: list[str]) -> bool:
+        if not query_terms:
+            return True
+        return paper.relevance_score >= 0.42 or self._has_phrase_match(paper, query_terms)
+
+    def _keyword_score(self, result: ProviderResult, query_terms: list[str]) -> float:
+        if not query_terms:
+            return result.relevance_score
+        text = self._paper_search_text(result)
+        if not text:
+            return 0.0
+        matched = [term for term in query_terms if term in text]
+        coverage = len(matched) / len(query_terms)
+        phrase_bonus = 0.2 if self._has_text_phrase_match(text, query_terms) else 0.0
+        fuzzy_title = SequenceMatcher(None, " ".join(query_terms), self._normalize_words(result.title)).ratio()
+        return min(1.0, coverage + phrase_bonus + max(0.0, fuzzy_title - 0.55) * 0.4)
+
+    def _paper_search_text(self, result: ProviderResult) -> str:
+        return self._normalize_words(
+            " ".join(
+                item
+                for item in [
+                    result.title,
+                    result.abstract,
+                    result.venue,
+                    result.authors,
+                    " ".join(result.keywords),
+                    " ".join(result.fields_of_study),
+                    result.doi,
+                ]
+                if item
+            )
+        )
+
+    def _has_phrase_match(self, paper: DiscoveryPaper, query_terms: list[str]) -> bool:
+        text = self._normalize_words(
+            " ".join(
+                item
+                for item in [
+                    paper.title,
+                    paper.abstract,
+                    paper.venue,
+                    " ".join(paper.keywords),
+                    " ".join(paper.fields_of_study),
+                ]
+                if item
+            )
+        )
+        return self._has_text_phrase_match(text, query_terms)
+
+    def _has_text_phrase_match(self, text: str, query_terms: list[str]) -> bool:
+        if len(query_terms) < 2:
+            return False
+        joined = " ".join(query_terms)
+        return joined in text
+
+    def _query_terms(self, query: str) -> list[str]:
+        stop_words = {
+            "a",
+            "an",
+            "and",
+            "are",
+            "as",
+            "for",
+            "in",
+            "of",
+            "on",
+            "or",
+            "the",
+            "to",
+            "with",
+            "研究",
+            "方法",
+            "论文",
+            "综述",
+            "应用",
+        }
+        words = re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]{2,}", query.lower())
+        terms = []
+        for word in words:
+            if word in stop_words or len(word) < 2:
+                continue
+            if word not in terms:
+                terms.append(word)
+        return terms[:12]
+
+    def _normalize_words(self, value: str) -> str:
+        return " ".join(re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]{2,}", value.lower()))
 
     def _find_imported_document_id(self, result: ProviderResult) -> str | None:
         doi = result.doi.lower() if result.doi else None
@@ -165,8 +263,11 @@ class DiscoveryService:
         )
 
     def _metadata_filename(self, paper: DiscoveryPaper) -> str:
-        title = re.sub(r"[^A-Za-z0-9._-]+", "-", paper.title).strip("-") or "discovered-paper"
-        return f"{paper.source}-{title[:96]}.pdf"
+        title = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", paper.title)
+        title = re.sub(r"\s+", "-", title).strip(" .-") or "discovered-paper"
+        identity = paper.doi or paper.source_id or paper.external_url or paper.title
+        digest = hashlib.sha1(f"{paper.source}:{identity}".encode("utf-8")).hexdigest()[:10]
+        return f"{paper.source}-{title[:80]}-{digest}.metadata"
 
     def _normalize_title(self, title: str) -> str:
         return re.sub(r"[^a-z0-9]+", "", title.lower())

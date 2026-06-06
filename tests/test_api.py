@@ -760,8 +760,11 @@ def test_discovery_service_dedupes_and_marks_imported(tmp_path: Path) -> None:
     assert len(response.papers) == 1
     assert response.papers[0].doi == "10.1234/graph-rag"
     assert document.pages == 0
-    assert document.chunks == 0
+    assert document.chunks == 1
+    assert document.filename.endswith(".metadata")
+    assert document.filename != "discovered-paper.pdf"
     assert document.metadata.metadata_source == "semantic_scholar"
+    assert store.search("grounded generation graph retrieval", top_k=1)
     assert response_after_import.papers[0].imported_document_id == document.document_id
 
 
@@ -776,7 +779,7 @@ def test_discovery_service_searches_sources_concurrently(tmp_path: Path) -> None
                 ProviderResult(
                     source=self.source,
                     source_id=f"{self.source}-1",
-                    title=f"{self.source} result",
+                    title=f"{self.source} graph retrieval result",
                     relevance_score=0.9,
                 )
             ]
@@ -798,6 +801,38 @@ def test_discovery_service_searches_sources_concurrently(tmp_path: Path) -> None
 
     assert len(response.papers) == 2
     assert elapsed < 0.35
+
+
+def test_discovery_service_filters_irrelevant_results(tmp_path: Path) -> None:
+    class FakeProvider:
+        def search(self, query: str, limit: int):
+            return [
+                ProviderResult(
+                    source="openalex",
+                    source_id="match",
+                    title="Water Quality Prediction With Neural Networks",
+                    abstract="Neural networks predict water quality from sensor observations.",
+                    keywords=["water quality", "neural networks"],
+                    relevance_score=0.8,
+                ),
+                ProviderResult(
+                    source="openalex",
+                    source_id="miss",
+                    title="A Survey of Medieval Manuscript Preservation",
+                    abstract="Historical archive conservation and cataloging.",
+                    keywords=["history"],
+                    relevance_score=0.95,
+                ),
+            ]
+
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    service = DiscoveryService(store=store, providers={"openalex": FakeProvider()})
+
+    response = service.search(
+        main.DiscoveryRequest(query="water quality neural networks", sources=["openalex"])
+    )
+
+    assert [paper.source_id for paper in response.papers] == ["match"]
 
 
 def test_discovery_endpoint_search_and_import(monkeypatch, tmp_path: Path) -> None:
@@ -842,6 +877,7 @@ def test_discovery_endpoint_search_and_import(monkeypatch, tmp_path: Path) -> No
     assert search_response.json()["papers"][0]["source"] == "openalex"
     assert import_response.status_code == 200
     assert import_response.json()["document"]["metadata"]["title"] == "Water Quality Prediction With Neural Networks"
-    assert import_response.json()["document"]["chunks"] == 0
+    assert import_response.json()["document"]["chunks"] == 1
+    assert import_response.json()["document"]["filename"].endswith(".metadata")
     assert documents_response.status_code == 200
     assert documents_response.json()[0]["metadata"]["metadata_source"] == "openalex"

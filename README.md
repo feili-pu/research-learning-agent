@@ -351,7 +351,11 @@ POST /discovery/import-metadata
 
 `/discovery/search` returns external candidate papers with title, authors, year, venue, DOI, abstract, citation/reference counts, source URL, PDF URL when available, open-access marker, and an import marker when the same DOI or title already exists locally.
 
-`/discovery/import-metadata` imports a selected candidate into the local paper library as a metadata-only record. It does not download the PDF automatically; the imported record has `pages=0` and `chunks=0` until a PDF is uploaded or linked in a later version.
+The discovery layer filters candidates against the user query and focus. A paper must match the query terms in title, abstract, keywords, fields of study, venue, DOI, or related metadata before it is shown.
+
+`/discovery/import-metadata` imports a selected candidate into the local paper library as a metadata-only record. It does not download the PDF automatically; the imported record has `pages=0` and a searchable metadata chunk so it can participate in local retrieval, review, method mapping, and paper comparison before the full PDF is uploaded.
+
+The frontend also exposes the current mode prompt or retrieval intent so users can inspect what each workflow is asking the system to do.
 
 ## Project Structure
 

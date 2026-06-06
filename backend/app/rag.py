@@ -108,16 +108,31 @@ class RagStore:
 
     def add_metadata_document(self, filename: str, metadata: PaperMetadata) -> Document:
         document_id = uuid4().hex
+        safe_name = self._safe_record_filename(filename)
+        chunk_text = self._metadata_chunk_text(metadata)
+        metadata_chunks = 1 if chunk_text else 0
         document = Document(
             document_id=document_id,
-            filename=self._safe_filename(filename),
+            filename=safe_name,
             pages=0,
-            chunks=0,
+            chunks=metadata_chunks,
             metadata=metadata,
         )
         self.documents[document_id] = document
+        if chunk_text:
+            self.chunks.append(
+                Chunk(
+                    document_id=document_id,
+                    filename=safe_name,
+                    page=0,
+                    chunk_id=f"{document_id}-metadata",
+                    text=chunk_text,
+                    section="metadata",
+                )
+            )
         self._mark_duplicates()
         self._save_store()
+        self._rebuild_index()
         return document
 
     def list_documents(self) -> list[Document]:
@@ -285,6 +300,7 @@ class RagStore:
                 metadata=metadata,
             )
         self.chunks = [Chunk(**item) for item in data.get("chunks", [])]
+        self._ensure_metadata_chunks()
         self._mark_duplicates()
 
     def _save_store(self) -> None:
@@ -456,6 +472,14 @@ class RagStore:
         name = Path(filename).name.strip() or "document.pdf"
         name = re.sub(r"[^A-Za-z0-9._-]+", "-", name)
         return name if name.lower().endswith(".pdf") else f"{name}.pdf"
+
+    def _safe_record_filename(self, filename: str) -> str:
+        name = Path(filename).name.strip() or "discovered-paper.metadata"
+        name = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", name)
+        name = re.sub(r"\s+", "-", name).strip(" .-")
+        if not name:
+            name = "discovered-paper.metadata"
+        return name if Path(name).suffix else f"{name}.metadata"
 
     def _document_info_from_path(self, pdf_path: Path) -> tuple[str, str]:
         name = pdf_path.name
@@ -703,6 +727,43 @@ class RagStore:
         authors = re.sub(r"\s+", " ", authors)
         authors = authors.strip(" ,;")
         return self._shorten(authors, max_chars=260)
+
+    def _metadata_chunk_text(self, metadata: PaperMetadata) -> str:
+        parts = [
+            f"Title: {metadata.title}" if metadata.title else None,
+            f"Authors: {metadata.authors}" if metadata.authors else None,
+            f"Year: {metadata.year}" if metadata.year else None,
+            f"Venue: {metadata.venue}" if metadata.venue else None,
+            f"DOI: {metadata.doi}" if metadata.doi else None,
+            f"Abstract: {metadata.abstract}" if metadata.abstract else None,
+            f"Keywords: {', '.join(metadata.keywords)}" if metadata.keywords else None,
+            f"Fields of study: {', '.join(metadata.fields_of_study)}" if metadata.fields_of_study else None,
+            f"Source: {metadata.metadata_source}" if metadata.metadata_source else None,
+            f"URL: {metadata.external_url}" if metadata.external_url else None,
+        ]
+        return self._normalize_text("\n".join(part for part in parts if part))
+
+    def _ensure_metadata_chunks(self) -> None:
+        chunked_document_ids = {chunk.document_id for chunk in self.chunks}
+        for document in self.documents.values():
+            if document.document_id in chunked_document_ids:
+                continue
+            if document.pages > 0:
+                continue
+            chunk_text = self._metadata_chunk_text(document.metadata)
+            if not chunk_text:
+                continue
+            self.chunks.append(
+                Chunk(
+                    document_id=document.document_id,
+                    filename=document.filename,
+                    page=0,
+                    chunk_id=f"{document.document_id}-metadata",
+                    text=chunk_text,
+                    section="metadata",
+                )
+            )
+            document.chunks = 1
 
     def _metadata_from_dict(self, data: dict) -> PaperMetadata:
         return PaperMetadata(

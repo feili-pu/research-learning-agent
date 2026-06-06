@@ -298,6 +298,35 @@ h2 {
   font-size: 14px;
 }
 
+.prompt-preview {
+  margin: 0 0 14px;
+  border: 1px solid #d4dcde;
+  border-radius: 6px;
+  background: #fbfdfd;
+}
+
+.prompt-preview summary {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  color: #31575c;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.prompt-preview pre {
+  margin: 0;
+  padding: 12px;
+  border-top: 1px solid #e0e7e8;
+  color: #26373d;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+}
+
 .input-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(160px, 220px) 112px;

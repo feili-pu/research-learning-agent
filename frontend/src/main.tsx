@@ -92,6 +92,17 @@ const modeDescriptions: Record<Mode, string> = {
   query: "直接向当前论文库提问，适合已有明确问题时使用。"
 };
 
+const modePromptInstructions: Record<Mode, string> = {
+  discovery: "外部文献发现不调用 LLM。系统会用研究方向和关注重点搜索外部源，并要求候选论文标题、摘要、关键词或研究领域覆盖输入关键词。",
+  "direction-review": "请把这些论文当作一个后台论文库来使用，围绕用户给定研究方向生成中文文献综述。输出应包含：研究背景、核心问题、代表论文、方法分类、主要结论、局限性、可继续深入的问题。不要试图总结整个论文库，只总结与研究方向相关的论文。",
+  "method-map": "请专注梳理这个研究方向中的方法体系。输出应包含：方法类别、每类方法解决的问题、关键技术细节、优点、局限、对应论文来源。如果证据不足，请明确指出缺少哪些方法细节。",
+  "detail-briefing": "请围绕用户关注点做细节梳理，适合研究生做开题或复现前阅读。输出应包含：关键定义、实验/数据线索、模型或算法细节、重要结论、可复现切入点。",
+  "paper-compare": "请对检索到的代表论文做横向对比，帮助用户判断哪些论文值得优先阅读或复现。输出应包含：对比维度表、每篇论文的核心问题、方法差异、实验/数据线索、优点、局限、适合继续研究的切入点。如果某个维度证据不足，请写明缺少证据，不要补编。",
+  "paper-search": "相关论文模式不调用 LLM。系统会用研究方向和关注重点检索本地论文库，把相关证据块按 document_id 聚合成论文候选并排序。",
+  evaluation: "检索评估模式不调用 LLM。系统会运行内置评估集，检查检索证据是否覆盖预期关键词，并输出命中词、缺失词和分数。",
+  query: "你是一个研究学习助手。只能依据提供的来源回答；如果来源不足，要说明缺少什么；回答中使用 [1]、[2] 这样的编号引用来源。"
+};
+
 function App() {
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [mode, setMode] = useState<Mode>("direction-review");
@@ -450,6 +461,13 @@ function App() {
           </div>
 
           <p className="mode-note">{modeDescriptions[mode]}</p>
+          <PromptPreview
+            mode={mode}
+            direction={direction}
+            focus={focus}
+            question={question}
+            sectionFilter={sectionFilter}
+          />
 
           <div className="input-grid research-grid">
             {mode === "query" ? (
@@ -549,6 +567,75 @@ function Metric({ icon, label, value }: { icon: ReactNode; label: string; value:
       <strong>{value}</strong>
     </div>
   );
+}
+
+function PromptPreview({
+  mode,
+  direction,
+  focus,
+  question,
+  sectionFilter
+}: {
+  mode: Mode;
+  direction: string;
+  focus: string;
+  question: string;
+  sectionFilter: string;
+}) {
+  const prompt = buildPromptPreview(mode, direction, focus, question, sectionFilter);
+  return (
+    <details className="prompt-preview">
+      <summary>查看当前功能提示词 / 检索意图</summary>
+      <pre>{prompt}</pre>
+    </details>
+  );
+}
+
+function buildPromptPreview(
+  mode: Mode,
+  direction: string,
+  focus: string,
+  question: string,
+  sectionFilter: string
+) {
+  if (mode === "query") {
+    return [
+      "系统提示词：",
+      modePromptInstructions.query,
+      "",
+      "用户问题：",
+      question
+    ].join("\n");
+  }
+
+  if (mode === "discovery" || mode === "paper-search" || mode === "evaluation") {
+    return [
+      "检索意图：",
+      modePromptInstructions[mode],
+      "",
+      `研究方向：${direction}`,
+      focus ? `关注重点：${focus}` : null,
+      sectionFilter ? `章节范围：${sectionFilter}` : null
+    ].filter(Boolean).join("\n");
+  }
+
+  const task =
+    mode === "direction-review"
+      ? "direction_review"
+      : mode === "method-map"
+        ? "method_map"
+        : mode === "paper-compare"
+          ? "paper_compare"
+          : "detail_briefing";
+
+  return [
+    `任务：${task}`,
+    `研究方向：${direction}`,
+    focus ? `关注重点：${focus}` : null,
+    sectionFilter ? `章节范围：${sectionFilter}` : null,
+    `要求：${modePromptInstructions[mode]}`,
+    "回答时必须基于给定来源，并用 [1]、[2] 这样的编号引用证据。"
+  ].filter(Boolean).join("\n");
 }
 
 function ResultView({
