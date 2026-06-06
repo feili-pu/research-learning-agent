@@ -107,8 +107,8 @@ function App() {
   const [duplicateFilter, setDuplicateFilter] = useState("");
   const [documentSort, setDocumentSort] = useState("title");
   const [sectionFilter, setSectionFilter] = useState("");
-  const [discoverySources, setDiscoverySources] = useState(["semantic_scholar", "crossref", "arxiv", "openalex"]);
-  const [topKDocuments, setTopKDocuments] = useState(5);
+  const [discoverySources, setDiscoverySources] = useState(["semantic_scholar", "openalex"]);
+  const [topKDocuments, setTopKDocuments] = useState(3);
   const [evidenceK, setEvidenceK] = useState(18);
   const [result, setResult] = useState<AppResult>(null);
   const [busy, setBusy] = useState(false);

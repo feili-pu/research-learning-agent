@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 
 from fastapi.testclient import TestClient
 import numpy as np
@@ -762,6 +763,41 @@ def test_discovery_service_dedupes_and_marks_imported(tmp_path: Path) -> None:
     assert document.chunks == 0
     assert document.metadata.metadata_source == "semantic_scholar"
     assert response_after_import.papers[0].imported_document_id == document.document_id
+
+
+def test_discovery_service_searches_sources_concurrently(tmp_path: Path) -> None:
+    class SlowProvider:
+        def __init__(self, source: str) -> None:
+            self.source = source
+
+        def search(self, query: str, limit: int):
+            time.sleep(0.2)
+            return [
+                ProviderResult(
+                    source=self.source,
+                    source_id=f"{self.source}-1",
+                    title=f"{self.source} result",
+                    relevance_score=0.9,
+                )
+            ]
+
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    service = DiscoveryService(
+        store=store,
+        providers={
+            "semantic_scholar": SlowProvider("semantic_scholar"),
+            "openalex": SlowProvider("openalex"),
+        },
+    )
+
+    started = time.perf_counter()
+    response = service.search(
+        main.DiscoveryRequest(query="graph retrieval", sources=["semantic_scholar", "openalex"])
+    )
+    elapsed = time.perf_counter() - started
+
+    assert len(response.papers) == 2
+    assert elapsed < 0.35
 
 
 def test_discovery_endpoint_search_and_import(monkeypatch, tmp_path: Path) -> None:

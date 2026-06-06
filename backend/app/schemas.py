@@ -150,8 +150,8 @@ class LiteratureEvaluationResponse(BaseModel):
 class DiscoveryRequest(BaseModel):
     query: str = Field(min_length=1)
     focus: str | None = None
-    sources: list[str] = Field(default_factory=lambda: ["semantic_scholar", "crossref", "arxiv", "openalex"])
-    limit_per_source: int = Field(default=5, ge=1, le=20)
+    sources: list[str] = Field(default_factory=lambda: ["semantic_scholar", "openalex"])
+    limit_per_source: int = Field(default=3, ge=1, le=20)
 
 
 class DiscoveryPaper(BaseModel):

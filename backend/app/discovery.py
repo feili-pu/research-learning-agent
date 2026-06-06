@@ -1,6 +1,7 @@
 import json
 import re
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from html import unescape
 from urllib.error import HTTPError, URLError
@@ -47,17 +48,23 @@ class DiscoveryService:
         papers: list[DiscoveryPaper] = []
         errors: list[str] = []
 
-        for source in source_names:
-            provider = self.providers.get(source)
-            if provider is None:
-                errors.append(f"Unsupported discovery source: {source}")
-                continue
-            try:
-                results = provider.search(query, request.limit_per_source)
-            except Exception as exc:
-                errors.append(f"{source}: {type(exc).__name__}")
-                continue
-            papers.extend(self._paper_from_result(result) for result in results if result.title)
+        with ThreadPoolExecutor(max_workers=min(len(source_names), 4) or 1) as executor:
+            futures = {}
+            for source in source_names:
+                provider = self.providers.get(source)
+                if provider is None:
+                    errors.append(f"Unsupported discovery source: {source}")
+                    continue
+                futures[executor.submit(provider.search, query, request.limit_per_source)] = source
+
+            for future in as_completed(futures):
+                source = futures[future]
+                try:
+                    results = future.result()
+                except Exception as exc:
+                    errors.append(f"{source}: {type(exc).__name__}")
+                    continue
+                papers.extend(self._paper_from_result(result) for result in results if result.title)
 
         return DiscoveryResponse(
             query=request.query,
@@ -107,7 +114,7 @@ class DiscoveryService:
             value = aliases.get(source.strip().lower().replace("-", "_"))
             if value and value not in normalized:
                 normalized.append(value)
-        return normalized or ["semantic_scholar", "crossref", "arxiv", "openalex"]
+        return normalized or ["semantic_scholar", "openalex"]
 
     def _paper_from_result(self, result: ProviderResult) -> DiscoveryPaper:
         imported = self._find_imported_document_id(result)
@@ -166,7 +173,7 @@ class DiscoveryService:
 
 
 class SemanticScholarDiscoveryClient:
-    def __init__(self, base_url: str = "https://api.semanticscholar.org/graph/v1", timeout: int = 15) -> None:
+    def __init__(self, base_url: str = "https://api.semanticscholar.org/graph/v1", timeout: int = 6) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
@@ -193,7 +200,7 @@ class SemanticScholarDiscoveryClient:
                 ),
             }
         )
-        payload = _get_json(f"{self.base_url}/paper/search?{params}", "research-learning-agent/0.15")
+        payload = _get_json(f"{self.base_url}/paper/search?{params}", "research-learning-agent/0.15", self.timeout)
         results = []
         for index, item in enumerate(payload.get("data", []) if isinstance(payload, dict) else []):
             if not isinstance(item, dict) or not item.get("title"):
@@ -225,13 +232,13 @@ class SemanticScholarDiscoveryClient:
 
 
 class CrossrefDiscoveryClient:
-    def __init__(self, base_url: str = "https://api.crossref.org/works", timeout: int = 15) -> None:
+    def __init__(self, base_url: str = "https://api.crossref.org/works", timeout: int = 6) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
     def search(self, query: str, limit: int) -> list[ProviderResult]:
         params = urlencode({"query.bibliographic": query, "rows": str(limit)})
-        payload = _get_json(f"{self.base_url}?{params}", "research-learning-agent/0.15")
+        payload = _get_json(f"{self.base_url}?{params}", "research-learning-agent/0.15", self.timeout)
         items = payload.get("message", {}).get("items", []) if isinstance(payload, dict) else []
         results = []
         for index, item in enumerate(items):
@@ -262,7 +269,7 @@ class CrossrefDiscoveryClient:
 
 
 class ArxivDiscoveryClient:
-    def __init__(self, base_url: str = "https://export.arxiv.org/api/query", timeout: int = 15) -> None:
+    def __init__(self, base_url: str = "https://export.arxiv.org/api/query", timeout: int = 6) -> None:
         self.base_url = base_url
         self.timeout = timeout
 
@@ -315,13 +322,13 @@ class ArxivDiscoveryClient:
 
 
 class OpenAlexDiscoveryClient:
-    def __init__(self, base_url: str = "https://api.openalex.org/works", timeout: int = 15) -> None:
+    def __init__(self, base_url: str = "https://api.openalex.org/works", timeout: int = 6) -> None:
         self.base_url = base_url
         self.timeout = timeout
 
     def search(self, query: str, limit: int) -> list[ProviderResult]:
         params = urlencode({"search": query, "per-page": str(limit)})
-        payload = _get_json(f"{self.base_url}?{params}", "research-learning-agent/0.15")
+        payload = _get_json(f"{self.base_url}?{params}", "research-learning-agent/0.15", self.timeout)
         results = []
         for index, item in enumerate(payload.get("results", []) if isinstance(payload, dict) else []):
             if not isinstance(item, dict):
@@ -355,10 +362,10 @@ class OpenAlexDiscoveryClient:
         return results
 
 
-def _get_json(url: str, user_agent: str) -> dict:
+def _get_json(url: str, user_agent: str, timeout: int) -> dict:
     request = Request(url, headers={"Accept": "application/json", "User-Agent": user_agent})
     try:
-        with urlopen(request, timeout=15) as response:
+        with urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
     except (HTTPError, URLError, TimeoutError, json.JSONDecodeError):
         return {}
