@@ -140,6 +140,8 @@ export type DiscoveryResponse = {
   focus: string | null;
   sources: string[];
   queries_used: string[];
+  query_planner: string;
+  planner_model: string | null;
   papers: DiscoveryPaper[];
   errors: string[];
 };

@@ -96,9 +96,12 @@ def get_evaluation_service() -> EvaluationService:
 
 def get_discovery_service() -> DiscoveryService:
     global discovery_service
-    current_store = get_store()
-    if discovery_service is None or discovery_service.store is not current_store:
-        discovery_service = DiscoveryService(store=current_store)
+    current_answerer = get_answerer()
+    if (
+        discovery_service is None
+        or discovery_service.answerer is not current_answerer
+    ):
+        discovery_service = DiscoveryService(store_provider=get_store, answerer=current_answerer)
     return discovery_service
 
 

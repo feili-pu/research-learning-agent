@@ -179,6 +179,8 @@ class DiscoveryResponse(BaseModel):
     focus: str | None
     sources: list[str]
     queries_used: list[str] = Field(default_factory=list)
+    query_planner: str = "llm"
+    planner_model: str | None = None
     papers: list[DiscoveryPaper]
     errors: list[str] = Field(default_factory=list)
 

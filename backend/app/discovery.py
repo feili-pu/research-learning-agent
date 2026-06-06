@@ -39,50 +39,26 @@ class QueryPlan:
     raw_query: str
     queries: list[str]
     relevance_terms: list[str]
-
-
-CHINESE_TERM_EXPANSIONS = {
-    "图神经网络": ["graph neural network", "graph neural networks", "GNN"],
-    "推荐系统": ["recommender system", "recommendation", "collaborative filtering"],
-    "协同过滤": ["collaborative filtering"],
-    "水质预测": ["water quality prediction"],
-    "水质": ["water quality"],
-    "遥感": ["remote sensing"],
-    "高光谱": ["hyperspectral"],
-    "无人机": ["UAV", "unmanned aerial vehicle"],
-    "生物识别": ["biometrics", "biometric recognition"],
-    "模板保护": ["template protection"],
-    "检索增强生成": ["retrieval augmented generation", "RAG"],
-    "知识图谱": ["knowledge graph", "knowledge graphs"],
-    "大语言模型": ["large language model", "LLM"],
-    "深度学习": ["deep learning"],
-    "神经网络": ["neural networks", "neural network"],
-    "机器学习": ["machine learning"],
-    "多模态": ["multimodal", "multi-modal"],
-    "因果推断": ["causal inference"],
-    "综述": ["review", "survey"],
-    "基准": ["benchmark"],
-    "数据集": ["dataset"],
-    "实验": ["experiment", "experiments"],
-}
-
-
-ENGLISH_TERM_EXPANSIONS = {
-    "gnn": ["graph neural network", "graph neural networks"],
-    "rag": ["retrieval augmented generation"],
-    "llm": ["large language model", "large language models"],
-    "recommendation system": ["recommender system", "collaborative filtering"],
-    "recommendation": ["recommender system", "collaborative filtering"],
-    "water quality": ["water quality prediction"],
-}
+    planner: str = "llm"
+    model: str | None = None
+    errors: list[str] = field(default_factory=list)
 
 
 DISCOVERY_SEARCH_TIMEOUT_SECONDS = 12
+DISCOVERY_PLANNER_TIMEOUT_SECONDS = 20
 
 
 class DiscoveryService:
-    def __init__(self, store: RagStore, providers: dict[str, object] | None = None) -> None:
+    def __init__(
+        self,
+        store: RagStore | None = None,
+        providers: dict[str, object] | None = None,
+        answerer=None,
+        store_provider=None,
+    ) -> None:
         self.store = store
+        self.store_provider = store_provider
+        self.answerer = answerer
         self.providers = providers or {
             "semantic_scholar": SemanticScholarDiscoveryClient(),
             "crossref": CrossrefDiscoveryClient(),
@@ -94,7 +70,19 @@ class DiscoveryService:
         source_names = self._normalize_sources(request.sources)
         query_plan = self._build_query_plan(request)
         papers: list[DiscoveryPaper] = []
-        errors: list[str] = []
+        errors: list[str] = list(query_plan.errors)
+
+        if not query_plan.queries:
+            return DiscoveryResponse(
+                query=request.query,
+                focus=request.focus,
+                sources=source_names,
+                queries_used=[],
+                query_planner=query_plan.planner,
+                planner_model=query_plan.model,
+                papers=[],
+                errors=errors,
+            )
 
         futures = {}
         task_count = len(source_names) * len(query_plan.queries)
@@ -138,6 +126,8 @@ class DiscoveryService:
             focus=request.focus,
             sources=source_names,
             queries_used=query_plan.queries,
+            query_planner=query_plan.planner,
+            planner_model=query_plan.model,
             papers=self._dedupe_and_rank(papers),
             errors=errors,
         )
@@ -161,7 +151,14 @@ class DiscoveryService:
             keywords=paper.keywords,
         )
         filename = self._metadata_filename(paper)
-        return self.store.add_metadata_document(filename, metadata)
+        return self._get_store().add_metadata_document(filename, metadata)
+
+    def _get_store(self) -> RagStore:
+        if self.store is None:
+            if self.store_provider is None:
+                raise RuntimeError("DiscoveryService has no RagStore configured.")
+            self.store = self.store_provider()
+        return self.store
 
     def _search_query(self, request: DiscoveryRequest) -> str:
         if not request.focus:
@@ -170,73 +167,120 @@ class DiscoveryService:
 
     def _build_query_plan(self, request: DiscoveryRequest) -> QueryPlan:
         raw_query = self._normalize_space(self._search_query(request))
-        expansion_groups = self._expansion_groups(raw_query)
-        expansion_phrases = self._unique_items(phrase for group in expansion_groups for phrase in group)
-        queries: list[str] = []
+        if self.answerer is None or getattr(self.answerer, "client", None) is None:
+            return QueryPlan(
+                raw_query=raw_query,
+                queries=[],
+                relevance_terms=[],
+                model=getattr(self.answerer, "model", None),
+                errors=["LLM query planning is required for literature discovery. Configure OPENAI_API_KEY first."],
+            )
 
-        if expansion_groups:
-            primary = [group[0] for group in expansion_groups[:4]]
-            queries.append(" ".join(primary))
+        planner_executor = ThreadPoolExecutor(max_workers=1)
+        try:
+            future = planner_executor.submit(self._call_query_planner_llm, request, raw_query)
+            payload = future.result(timeout=DISCOVERY_PLANNER_TIMEOUT_SECONDS)
+        except FuturesTimeoutError:
+            future.cancel()
+            return QueryPlan(
+                raw_query=raw_query,
+                queries=[],
+                relevance_terms=[],
+                model=getattr(self.answerer, "model", None),
+                errors=["LLM query planning timed out. Check the model, API key, base URL, or relay service."],
+            )
+        except Exception as exc:
+            return QueryPlan(
+                raw_query=raw_query,
+                queries=[],
+                relevance_terms=[],
+                model=getattr(self.answerer, "model", None),
+                errors=[f"LLM query planning failed: {type(exc).__name__}"],
+            )
+        finally:
+            planner_executor.shutdown(wait=False, cancel_futures=True)
 
-            alternates = [group[1] if len(group) > 1 else group[0] for group in expansion_groups[:4]]
-            queries.append(" ".join(alternates))
+        queries = self._unique_queries([str(item) for item in payload.get("queries", [])])[:3]
+        relevance_terms = self._unique_items(
+            [
+                *[str(item) for item in payload.get("relevance_terms", [])],
+                *self._query_terms(" ".join([raw_query, *queries])),
+            ]
+        )[:18]
+        if not queries:
+            return QueryPlan(
+                raw_query=raw_query,
+                queries=[],
+                relevance_terms=[],
+                model=getattr(self.answerer, "model", None),
+                errors=["LLM query planning returned no usable search queries."],
+            )
+        return QueryPlan(
+            raw_query=raw_query,
+            queries=queries,
+            relevance_terms=relevance_terms,
+            model=getattr(self.answerer, "model", None),
+        )
 
-            compact = [self._compact_term(group) for group in expansion_groups[:4]]
-            if compact != primary:
-                queries.append(" ".join(compact))
+    def _call_query_planner_llm(self, request: DiscoveryRequest, raw_query: str) -> dict:
+        system_prompt = (
+            "You are an expert academic literature search strategist. "
+            "Convert the user's Chinese or English research intent into precise external paper database queries. "
+            "Return only valid JSON. Do not include markdown."
+        )
+        user_prompt = "\n".join(
+            [
+                "Create a literature discovery query plan.",
+                f"Research query: {request.query}",
+                f"Focus: {request.focus or ''}",
+                "Requirements:",
+                "- Produce 2 to 3 concise English academic search queries for Semantic Scholar, OpenAlex, Crossref, or arXiv.",
+                "- Preserve the user's core topic; do not broaden to unrelated fields.",
+                "- Expand Chinese terms, acronyms, and method names into standard English academic terminology.",
+                "- Include important synonyms as relevance_terms, but keep each query short.",
+                "- Output JSON with this shape:",
+                '{"queries":["..."],"relevance_terms":["..."]}',
+                f"Combined intent: {raw_query}",
+            ]
+        )
 
-        english_query = self._english_query(raw_query)
-        if english_query:
-            queries.append(english_query)
-        queries.append(raw_query)
+        if getattr(self.answerer, "wire_api", "responses") == "chat":
+            response = self.answerer.client.chat.completions.create(
+                model=self.answerer.model,
+                timeout=DISCOVERY_PLANNER_TIMEOUT_SECONDS,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+            content = response.choices[0].message.content or ""
+        else:
+            response = self.answerer.client.responses.create(
+                model=self.answerer.model,
+                timeout=DISCOVERY_PLANNER_TIMEOUT_SECONDS,
+                input=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+            content = response.output_text
 
-        queries = self._unique_queries(queries)[:3]
-        relevance_terms = self._relevance_terms(raw_query, queries, expansion_phrases)
-        return QueryPlan(raw_query=raw_query, queries=queries, relevance_terms=relevance_terms)
+        return self._parse_query_plan_json(content)
 
-    def _expansion_groups(self, query: str) -> list[list[str]]:
-        groups: list[list[str]] = []
-        used_phrases: set[str] = set()
-        lower_query = query.lower()
-
-        for term, expansions in sorted(CHINESE_TERM_EXPANSIONS.items(), key=lambda item: len(item[0]), reverse=True):
-            if term not in query:
-                continue
-            normalized = tuple(self._normalize_space(item) for item in expansions if item)
-            signature = normalized[0].lower() if normalized else ""
-            if signature and signature not in used_phrases:
-                groups.append(list(normalized))
-                used_phrases.add(signature)
-
-        for term, expansions in sorted(ENGLISH_TERM_EXPANSIONS.items(), key=lambda item: len(item[0]), reverse=True):
-            if term not in lower_query:
-                continue
-            normalized = tuple(self._normalize_space(item) for item in expansions if item)
-            signature = normalized[0].lower() if normalized else ""
-            if signature and signature not in used_phrases:
-                groups.append(list(normalized))
-                used_phrases.add(signature)
-
-        return groups
-
-    def _english_query(self, query: str) -> str | None:
-        terms = [term for term in self._query_terms(query) if re.fullmatch(r"[a-z0-9]+", term)]
-        return " ".join(terms) if terms else None
-
-    def _compact_term(self, group: list[str]) -> str:
-        for term in group:
-            if term.isupper() or len(term) <= 4:
-                return term
-        return group[0]
-
-    def _relevance_terms(self, raw_query: str, queries: list[str], expansion_phrases: list[str]) -> list[str]:
-        phrase_terms = [
-            self._normalize_words(phrase)
-            for phrase in expansion_phrases
-            if " " in self._normalize_words(phrase)
-        ]
-        token_terms = self._query_terms(" ".join([raw_query, *queries]))
-        return self._unique_items([*phrase_terms, *token_terms])[:18]
+    def _parse_query_plan_json(self, content: str) -> dict:
+        text = content.strip()
+        if not text:
+            raise ValueError("empty planner response")
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+            if not match:
+                raise
+            payload = json.loads(match.group(0))
+        if not isinstance(payload, dict):
+            raise ValueError("planner response must be a JSON object")
+        return payload
 
     def _unique_queries(self, queries: list[str]) -> list[str]:
         return self._unique_items(
@@ -392,6 +436,8 @@ class DiscoveryService:
         return re.sub(r"\s+", " ", value).strip()
 
     def _find_imported_document_id(self, result: ProviderResult) -> str | None:
+        if self.store is None:
+            return None
         doi = result.doi.lower() if result.doi else None
         title = self._normalize_title(result.title)
         for document in self.store.documents.values():

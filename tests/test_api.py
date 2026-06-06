@@ -718,6 +718,41 @@ def test_literature_evaluation_endpoint(monkeypatch, tmp_path: Path) -> None:
     assert {"name", "matched_terms", "missing_terms", "score", "passed"} <= set(data["cases"][0])
 
 
+class FakeDiscoveryPlannerResponse:
+    def __init__(self, output_text: str) -> None:
+        self.output_text = output_text
+
+
+class FakeDiscoveryPlannerResponses:
+    def __init__(self, output_text: str) -> None:
+        self.output_text = output_text
+        self.kwargs = None
+
+    def create(self, **kwargs):
+        self.kwargs = kwargs
+        return FakeDiscoveryPlannerResponse(self.output_text)
+
+
+class FakeDiscoveryPlannerClient:
+    def __init__(self, output_text: str) -> None:
+        self.responses = FakeDiscoveryPlannerResponses(output_text)
+
+
+class FakeDiscoveryPlannerAnswerer:
+    def __init__(self, queries: list[str], relevance_terms: list[str] | None = None) -> None:
+        relevance_terms = relevance_terms or queries
+        payload = (
+            '{"queries":'
+            f'{queries!r},'
+            '"relevance_terms":'
+            f'{relevance_terms!r}'
+            "}"
+        ).replace("'", '"')
+        self.model = "test-discovery-planner"
+        self.wire_api = "responses"
+        self.client = FakeDiscoveryPlannerClient(payload)
+
+
 def test_discovery_service_dedupes_and_marks_imported(tmp_path: Path) -> None:
     class FakeProvider:
         def search(self, query: str, limit: int):
@@ -747,7 +782,11 @@ def test_discovery_service_dedupes_and_marks_imported(tmp_path: Path) -> None:
             ]
 
     store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
-    service = DiscoveryService(store=store, providers={"semantic_scholar": FakeProvider()})
+    planner = FakeDiscoveryPlannerAnswerer(
+        queries=["graph retrieval augmented generation"],
+        relevance_terms=["graph retrieval augmented generation", "grounded generation"],
+    )
+    service = DiscoveryService(store=store, providers={"semantic_scholar": FakeProvider()}, answerer=planner)
 
     response = service.search(
         main.DiscoveryRequest(query="graph retrieval augmented generation", sources=["semantic_scholar"])
@@ -785,12 +824,14 @@ def test_discovery_service_searches_sources_concurrently(tmp_path: Path) -> None
             ]
 
     store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    planner = FakeDiscoveryPlannerAnswerer(queries=["graph retrieval"], relevance_terms=["graph retrieval"])
     service = DiscoveryService(
         store=store,
         providers={
             "semantic_scholar": SlowProvider("semantic_scholar"),
             "openalex": SlowProvider("openalex"),
         },
+        answerer=planner,
     )
 
     started = time.perf_counter()
@@ -826,13 +867,19 @@ def test_discovery_service_filters_irrelevant_results(tmp_path: Path) -> None:
             ]
 
     store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
-    service = DiscoveryService(store=store, providers={"openalex": FakeProvider()})
+    planner = FakeDiscoveryPlannerAnswerer(
+        queries=["water quality neural networks"],
+        relevance_terms=["water quality", "neural networks"],
+    )
+    service = DiscoveryService(store=store, providers={"openalex": FakeProvider()}, answerer=planner)
 
     response = service.search(
         main.DiscoveryRequest(query="water quality neural networks", sources=["openalex"])
     )
 
     assert [paper.source_id for paper in response.papers] == ["match"]
+    assert response.query_planner == "llm"
+    assert response.planner_model == "test-discovery-planner"
 
 
 def test_discovery_service_plans_chinese_queries_for_external_search(tmp_path: Path) -> None:
@@ -858,7 +905,14 @@ def test_discovery_service_plans_chinese_queries_for_external_search(tmp_path: P
 
     provider = RecordingProvider()
     store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
-    service = DiscoveryService(store=store, providers={"semantic_scholar": provider})
+    planner = FakeDiscoveryPlannerAnswerer(
+        queries=[
+            "graph neural networks recommender systems",
+            "GNN recommendation collaborative filtering",
+        ],
+        relevance_terms=["graph neural networks", "recommender systems", "collaborative filtering"],
+    )
+    service = DiscoveryService(store=store, providers={"semantic_scholar": provider}, answerer=planner)
 
     response = service.search(
         main.DiscoveryRequest(query="图神经网络在推荐系统中的应用", sources=["semantic_scholar"])
@@ -866,8 +920,27 @@ def test_discovery_service_plans_chinese_queries_for_external_search(tmp_path: P
 
     assert response.papers
     assert set(response.queries_used) == set(provider.queries)
+    assert planner.client.responses.kwargs["model"] == "test-discovery-planner"
+    assert "图神经网络在推荐系统中的应用" in planner.client.responses.kwargs["input"][1]["content"]
     assert any("graph neural" in query.lower() for query in response.queries_used)
     assert any("recommend" in query.lower() or "recommender" in query.lower() for query in response.queries_used)
+
+
+def test_discovery_service_requires_llm_query_planning(tmp_path: Path) -> None:
+    class FakeProvider:
+        def search(self, query: str, limit: int):
+            raise AssertionError("provider should not be called without LLM planning")
+
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    service = DiscoveryService(store=store, providers={"openalex": FakeProvider()})
+
+    response = service.search(main.DiscoveryRequest(query="water quality prediction", sources=["openalex"]))
+
+    assert response.papers == []
+    assert response.queries_used == []
+    assert response.query_planner == "llm"
+    assert response.errors
+    assert "LLM query planning is required" in response.errors[0]
 
 
 def test_discovery_endpoint_search_and_import(monkeypatch, tmp_path: Path) -> None:
@@ -896,7 +969,14 @@ def test_discovery_endpoint_search_and_import(monkeypatch, tmp_path: Path) -> No
     monkeypatch.setattr(
         main,
         "DiscoveryService",
-        lambda store: DiscoveryService(store=store, providers={"openalex": FakeProvider()}),
+        lambda store_provider=None, answerer=None: DiscoveryService(
+            store=store_provider(),
+            providers={"openalex": FakeProvider()},
+            answerer=FakeDiscoveryPlannerAnswerer(
+                queries=["water quality prediction neural networks"],
+                relevance_terms=["water quality prediction", "neural networks"],
+            ),
+        ),
     )
     client = TestClient(main.app)
 
@@ -910,6 +990,7 @@ def test_discovery_endpoint_search_and_import(monkeypatch, tmp_path: Path) -> No
 
     assert search_response.status_code == 200
     assert search_response.json()["queries_used"]
+    assert search_response.json()["query_planner"] == "llm"
     assert search_response.json()["papers"][0]["source"] == "openalex"
     assert import_response.status_code == 200
     assert import_response.json()["document"]["metadata"]["title"] == "Water Quality Prediction With Neural Networks"
