@@ -452,6 +452,37 @@ h2 {
   font-size: 12px;
 }
 
+.query-plan {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #d9e3e4;
+  border-radius: 6px;
+  background: #f7fbfb;
+}
+
+.query-plan strong {
+  color: #31575c;
+  font-size: 12px;
+}
+
+.query-plan div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.query-plan span {
+  padding: 4px 8px;
+  border: 1px solid #cbd6d8;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #34464c;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .paper-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));

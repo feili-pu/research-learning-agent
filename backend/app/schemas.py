@@ -178,6 +178,7 @@ class DiscoveryResponse(BaseModel):
     query: str
     focus: str | None
     sources: list[str]
+    queries_used: list[str] = Field(default_factory=list)
     papers: list[DiscoveryPaper]
     errors: list[str] = Field(default_factory=list)
 

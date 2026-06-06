@@ -835,6 +835,41 @@ def test_discovery_service_filters_irrelevant_results(tmp_path: Path) -> None:
     assert [paper.source_id for paper in response.papers] == ["match"]
 
 
+def test_discovery_service_plans_chinese_queries_for_external_search(tmp_path: Path) -> None:
+    class RecordingProvider:
+        def __init__(self) -> None:
+            self.queries: list[str] = []
+
+        def search(self, query: str, limit: int):
+            self.queries.append(query)
+            lowered = query.lower()
+            if "graph neural" not in lowered or ("recommend" not in lowered and "recommender" not in lowered):
+                return []
+            return [
+                ProviderResult(
+                    source="semantic_scholar",
+                    source_id="s2-gnn-rec",
+                    title="Graph Neural Networks for Recommender Systems",
+                    abstract="Graph neural networks improve recommender systems and collaborative filtering.",
+                    keywords=["graph neural networks", "recommender systems"],
+                    relevance_score=0.9,
+                )
+            ]
+
+    provider = RecordingProvider()
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    service = DiscoveryService(store=store, providers={"semantic_scholar": provider})
+
+    response = service.search(
+        main.DiscoveryRequest(query="图神经网络在推荐系统中的应用", sources=["semantic_scholar"])
+    )
+
+    assert response.papers
+    assert set(response.queries_used) == set(provider.queries)
+    assert any("graph neural" in query.lower() for query in response.queries_used)
+    assert any("recommend" in query.lower() or "recommender" in query.lower() for query in response.queries_used)
+
+
 def test_discovery_endpoint_search_and_import(monkeypatch, tmp_path: Path) -> None:
     class FakeProvider:
         def search(self, query: str, limit: int):
@@ -874,6 +909,7 @@ def test_discovery_endpoint_search_and_import(monkeypatch, tmp_path: Path) -> No
     documents_response = client.get("/documents", params={"source": "openalex"})
 
     assert search_response.status_code == 200
+    assert search_response.json()["queries_used"]
     assert search_response.json()["papers"][0]["source"] == "openalex"
     assert import_response.status_code == 200
     assert import_response.json()["document"]["metadata"]["title"] == "Water Quality Prediction With Neural Networks"

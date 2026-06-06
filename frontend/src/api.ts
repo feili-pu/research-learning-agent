@@ -139,6 +139,7 @@ export type DiscoveryResponse = {
   query: string;
   focus: string | null;
   sources: string[];
+  queries_used: string[];
   papers: DiscoveryPaper[];
   errors: string[];
 };

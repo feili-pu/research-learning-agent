@@ -93,7 +93,7 @@ const modeDescriptions: Record<Mode, string> = {
 };
 
 const modePromptInstructions: Record<Mode, string> = {
-  discovery: "外部文献发现不调用 LLM。系统会用研究方向和关注重点搜索外部源，并要求候选论文标题、摘要、关键词或研究领域覆盖输入关键词。",
+  discovery: "外部文献发现不调用 LLM。系统会先把研究方向和关注重点整理成多条论文库友好的中英文学术检索式，再搜索外部源，并要求候选论文标题、摘要、关键词或研究领域覆盖检索意图。",
   "direction-review": "请把这些论文当作一个后台论文库来使用，围绕用户给定研究方向生成中文文献综述。输出应包含：研究背景、核心问题、代表论文、方法分类、主要结论、局限性、可继续深入的问题。不要试图总结整个论文库，只总结与研究方向相关的论文。",
   "method-map": "请专注梳理这个研究方向中的方法体系。输出应包含：方法类别、每类方法解决的问题、关键技术细节、优点、局限、对应论文来源。如果证据不足，请明确指出缺少哪些方法细节。",
   "detail-briefing": "请围绕用户关注点做细节梳理，适合研究生做开题或复现前阅读。输出应包含：关键定义、实验/数据线索、模型或算法细节、重要结论、可复现切入点。",
@@ -709,6 +709,16 @@ function DiscoveryView({
           <h2>外部候选论文</h2>
           <span className="subtle-count">{result.papers.length} 篇 · {result.sources.join(" / ")}</span>
         </div>
+        {result.queries_used.length > 0 && (
+          <div className="query-plan">
+            <strong>实际检索式</strong>
+            <div>
+              {result.queries_used.map((query) => (
+                <span key={query}>{query}</span>
+              ))}
+            </div>
+          </div>
+        )}
         {result.errors.length > 0 && <div className="warning-box">{result.errors.join("；")}</div>}
         <div className="paper-grid discovery-grid">
           {result.papers.map((paper) => (

@@ -1,7 +1,7 @@
 import json
 import re
 import xml.etree.ElementTree as ET
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 import hashlib
@@ -34,6 +34,52 @@ class ProviderResult:
     relevance_score: float = 0.0
 
 
+@dataclass(frozen=True)
+class QueryPlan:
+    raw_query: str
+    queries: list[str]
+    relevance_terms: list[str]
+
+
+CHINESE_TERM_EXPANSIONS = {
+    "图神经网络": ["graph neural network", "graph neural networks", "GNN"],
+    "推荐系统": ["recommender system", "recommendation", "collaborative filtering"],
+    "协同过滤": ["collaborative filtering"],
+    "水质预测": ["water quality prediction"],
+    "水质": ["water quality"],
+    "遥感": ["remote sensing"],
+    "高光谱": ["hyperspectral"],
+    "无人机": ["UAV", "unmanned aerial vehicle"],
+    "生物识别": ["biometrics", "biometric recognition"],
+    "模板保护": ["template protection"],
+    "检索增强生成": ["retrieval augmented generation", "RAG"],
+    "知识图谱": ["knowledge graph", "knowledge graphs"],
+    "大语言模型": ["large language model", "LLM"],
+    "深度学习": ["deep learning"],
+    "神经网络": ["neural networks", "neural network"],
+    "机器学习": ["machine learning"],
+    "多模态": ["multimodal", "multi-modal"],
+    "因果推断": ["causal inference"],
+    "综述": ["review", "survey"],
+    "基准": ["benchmark"],
+    "数据集": ["dataset"],
+    "实验": ["experiment", "experiments"],
+}
+
+
+ENGLISH_TERM_EXPANSIONS = {
+    "gnn": ["graph neural network", "graph neural networks"],
+    "rag": ["retrieval augmented generation"],
+    "llm": ["large language model", "large language models"],
+    "recommendation system": ["recommender system", "collaborative filtering"],
+    "recommendation": ["recommender system", "collaborative filtering"],
+    "water quality": ["water quality prediction"],
+}
+
+
+DISCOVERY_SEARCH_TIMEOUT_SECONDS = 12
+
+
 class DiscoveryService:
     def __init__(self, store: RagStore, providers: dict[str, object] | None = None) -> None:
         self.store = store
@@ -46,38 +92,52 @@ class DiscoveryService:
 
     def search(self, request: DiscoveryRequest) -> DiscoveryResponse:
         source_names = self._normalize_sources(request.sources)
-        query = self._search_query(request)
-        query_terms = self._query_terms(query)
+        query_plan = self._build_query_plan(request)
         papers: list[DiscoveryPaper] = []
         errors: list[str] = []
 
-        with ThreadPoolExecutor(max_workers=min(len(source_names), 4) or 1) as executor:
-            futures = {}
+        futures = {}
+        task_count = len(source_names) * len(query_plan.queries)
+        executor = ThreadPoolExecutor(max_workers=min(task_count, 6) or 1)
+        try:
             for source in source_names:
                 provider = self.providers.get(source)
                 if provider is None:
                     errors.append(f"Unsupported discovery source: {source}")
                     continue
-                futures[executor.submit(provider.search, query, request.limit_per_source)] = source
+                for planned_query in query_plan.queries:
+                    futures[executor.submit(provider.search, planned_query, request.limit_per_source)] = source
 
-            for future in as_completed(futures):
-                source = futures[future]
-                try:
-                    results = future.result()
-                except Exception as exc:
-                    errors.append(f"{source}: {type(exc).__name__}")
-                    continue
-                for result in results:
-                    if not result.title:
+            try:
+                completed_futures = as_completed(futures, timeout=DISCOVERY_SEARCH_TIMEOUT_SECONDS)
+                for future in completed_futures:
+                    source = futures[future]
+                    try:
+                        results = future.result()
+                    except Exception as exc:
+                        errors.append(f"{source}: {type(exc).__name__}")
                         continue
-                    paper = self._paper_from_result(result, query_terms)
-                    if self._is_relevant(paper, query_terms):
-                        papers.append(paper)
+                    for result in results:
+                        if not result.title:
+                            continue
+                        paper = self._paper_from_result(result, query_plan.relevance_terms)
+                        if self._is_relevant(paper, query_plan.relevance_terms):
+                            papers.append(paper)
+            except FuturesTimeoutError:
+                pending_sources = sorted({source for future, source in futures.items() if not future.done()})
+                if pending_sources:
+                    errors.append(f"Timed out while searching: {', '.join(pending_sources)}")
+                for future in futures:
+                    if not future.done():
+                        future.cancel()
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
         return DiscoveryResponse(
             query=request.query,
             focus=request.focus,
             sources=source_names,
+            queries_used=query_plan.queries,
             papers=self._dedupe_and_rank(papers),
             errors=errors,
         )
@@ -107,6 +167,95 @@ class DiscoveryService:
         if not request.focus:
             return request.query
         return f"{request.query} {request.focus}"
+
+    def _build_query_plan(self, request: DiscoveryRequest) -> QueryPlan:
+        raw_query = self._normalize_space(self._search_query(request))
+        expansion_groups = self._expansion_groups(raw_query)
+        expansion_phrases = self._unique_items(phrase for group in expansion_groups for phrase in group)
+        queries: list[str] = []
+
+        if expansion_groups:
+            primary = [group[0] for group in expansion_groups[:4]]
+            queries.append(" ".join(primary))
+
+            alternates = [group[1] if len(group) > 1 else group[0] for group in expansion_groups[:4]]
+            queries.append(" ".join(alternates))
+
+            compact = [self._compact_term(group) for group in expansion_groups[:4]]
+            if compact != primary:
+                queries.append(" ".join(compact))
+
+        english_query = self._english_query(raw_query)
+        if english_query:
+            queries.append(english_query)
+        queries.append(raw_query)
+
+        queries = self._unique_queries(queries)[:3]
+        relevance_terms = self._relevance_terms(raw_query, queries, expansion_phrases)
+        return QueryPlan(raw_query=raw_query, queries=queries, relevance_terms=relevance_terms)
+
+    def _expansion_groups(self, query: str) -> list[list[str]]:
+        groups: list[list[str]] = []
+        used_phrases: set[str] = set()
+        lower_query = query.lower()
+
+        for term, expansions in sorted(CHINESE_TERM_EXPANSIONS.items(), key=lambda item: len(item[0]), reverse=True):
+            if term not in query:
+                continue
+            normalized = tuple(self._normalize_space(item) for item in expansions if item)
+            signature = normalized[0].lower() if normalized else ""
+            if signature and signature not in used_phrases:
+                groups.append(list(normalized))
+                used_phrases.add(signature)
+
+        for term, expansions in sorted(ENGLISH_TERM_EXPANSIONS.items(), key=lambda item: len(item[0]), reverse=True):
+            if term not in lower_query:
+                continue
+            normalized = tuple(self._normalize_space(item) for item in expansions if item)
+            signature = normalized[0].lower() if normalized else ""
+            if signature and signature not in used_phrases:
+                groups.append(list(normalized))
+                used_phrases.add(signature)
+
+        return groups
+
+    def _english_query(self, query: str) -> str | None:
+        terms = [term for term in self._query_terms(query) if re.fullmatch(r"[a-z0-9]+", term)]
+        return " ".join(terms) if terms else None
+
+    def _compact_term(self, group: list[str]) -> str:
+        for term in group:
+            if term.isupper() or len(term) <= 4:
+                return term
+        return group[0]
+
+    def _relevance_terms(self, raw_query: str, queries: list[str], expansion_phrases: list[str]) -> list[str]:
+        phrase_terms = [
+            self._normalize_words(phrase)
+            for phrase in expansion_phrases
+            if " " in self._normalize_words(phrase)
+        ]
+        token_terms = self._query_terms(" ".join([raw_query, *queries]))
+        return self._unique_items([*phrase_terms, *token_terms])[:18]
+
+    def _unique_queries(self, queries: list[str]) -> list[str]:
+        return self._unique_items(
+            self._normalize_space(query)
+            for query in queries
+            if query and self._normalize_space(query)
+        )
+
+    def _unique_items(self, items) -> list[str]:
+        unique = []
+        seen = set()
+        for item in items:
+            normalized = self._normalize_space(str(item))
+            key = normalized.lower()
+            if not normalized or key in seen:
+                continue
+            unique.append(normalized)
+            seen.add(key)
+        return unique
 
     def _normalize_sources(self, sources: list[str]) -> list[str]:
         aliases = {
@@ -159,7 +308,7 @@ class DiscoveryService:
         if not text:
             return 0.0
         matched = [term for term in query_terms if term in text]
-        coverage = len(matched) / len(query_terms)
+        coverage = len(matched) / min(len(query_terms), 8)
         phrase_bonus = 0.2 if self._has_text_phrase_match(text, query_terms) else 0.0
         fuzzy_title = SequenceMatcher(None, " ".join(query_terms), self._normalize_words(result.title)).ratio()
         return min(1.0, coverage + phrase_bonus + max(0.0, fuzzy_title - 0.55) * 0.4)
@@ -198,6 +347,9 @@ class DiscoveryService:
         return self._has_text_phrase_match(text, query_terms)
 
     def _has_text_phrase_match(self, text: str, query_terms: list[str]) -> bool:
+        for term in query_terms:
+            if " " in term and term in text:
+                return True
         if len(query_terms) < 2:
             return False
         joined = " ".join(query_terms)
@@ -235,6 +387,9 @@ class DiscoveryService:
 
     def _normalize_words(self, value: str) -> str:
         return " ".join(re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]{2,}", value.lower()))
+
+    def _normalize_space(self, value: str) -> str:
+        return re.sub(r"\s+", " ", value).strip()
 
     def _find_imported_document_id(self, result: ProviderResult) -> str | None:
         doi = result.doi.lower() if result.doi else None
