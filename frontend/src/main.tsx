@@ -105,6 +105,7 @@ const modePromptInstructions: Record<Mode, string> = {
 
 function App() {
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState(true);
   const [mode, setMode] = useState<Mode>("direction-review");
   const [direction, setDirection] = useState("图神经网络在推荐系统中的应用");
   const [focus, setFocus] = useState("研究问题、代表方法、实验设置和可复现切入点");
@@ -153,10 +154,13 @@ function App() {
   async function refreshDocuments(filters: DocumentFilters = currentDocumentFilters()) {
     const docs = await getDocuments(filters);
     setDocuments(docs);
+    setDocumentsLoading(false);
   }
 
   useEffect(() => {
-    refreshDocuments().catch((err) => setError(String(err)));
+    refreshDocuments()
+      .catch((err) => setError(String(err)))
+      .finally(() => setDocumentsLoading(false));
   }, []);
 
   async function handleUpload(file: File | null) {
@@ -320,9 +324,9 @@ function App() {
         <div>
           <div className="brand-line">
             <Microscope size={22} />
-            <span>Research Learning Agent</span>
+            <span>ScholarScope</span>
           </div>
-          <h1>方向级文献研究台</h1>
+          <h1>文献罗盘</h1>
         </div>
         <div className="status-pill">
           {busy ? <Loader2 className="spin" size={16} /> : <DatabaseZap size={16} />}
@@ -331,9 +335,9 @@ function App() {
       </header>
 
       <section className="metrics-band">
-        <Metric icon={<Library size={18} />} label="论文" value={documents.length} />
-        <Metric icon={<BookOpen size={18} />} label="页数" value={totals.pages} />
-        <Metric icon={<Layers size={18} />} label="证据块" value={totals.chunks} />
+        <Metric icon={<Library size={18} />} label="论文" value={documentsLoading ? "..." : documents.length} />
+        <Metric icon={<BookOpen size={18} />} label="页数" value={documentsLoading ? "..." : totals.pages} />
+        <Metric icon={<Layers size={18} />} label="证据块" value={documentsLoading ? "..." : totals.chunks} />
       </section>
 
       <div className="workspace">
@@ -440,7 +444,8 @@ function App() {
                   </div>
                 </article>
               ))}
-              {!documents.length && <p className="empty-text">还没有索引论文。</p>}
+              {documentsLoading && <p className="empty-text">正在加载论文索引...</p>}
+              {!documentsLoading && !documents.length && <p className="empty-text">还没有索引论文。</p>}
             </div>
           </section>
         </aside>
@@ -559,7 +564,7 @@ function App() {
   );
 }
 
-function Metric({ icon, label, value }: { icon: ReactNode; label: string; value: number }) {
+function Metric({ icon, label, value }: { icon: ReactNode; label: string; value: ReactNode }) {
   return (
     <div className="metric">
       {icon}

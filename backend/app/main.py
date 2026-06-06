@@ -30,7 +30,7 @@ from .schemas import (
 from .study import StudyService
 
 app = FastAPI(
-    title="Research Learning Agent",
+    title="ScholarScope",
     description="Local RAG API for learning from uploaded PDFs.",
     version="0.15.0",
 )

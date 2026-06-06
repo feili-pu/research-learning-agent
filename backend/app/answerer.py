@@ -30,6 +30,7 @@ class Answerer:
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.base_url = self._read_base_url()
         self.wire_api = os.getenv("RLA_OPENAI_WIRE_API", "responses").strip().lower()
+        self.timeout = float(os.getenv("RLA_LLM_TIMEOUT", "45"))
         self.client = self._build_client()
 
     def answer(self, question: str, results: list[SearchResult]) -> AnswerResult:
@@ -141,6 +142,7 @@ class Answerer:
         if self.wire_api == "chat":
             response = self.client.chat.completions.create(
                 model=self.model,
+                timeout=self.timeout,
                 messages=[
                     {
                         "role": "system",
@@ -156,6 +158,7 @@ class Answerer:
 
         response = self.client.responses.create(
             model=self.model,
+            timeout=self.timeout,
             input=[
                 {
                     "role": "system",

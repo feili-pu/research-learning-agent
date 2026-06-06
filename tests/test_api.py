@@ -10,7 +10,7 @@ from backend.app.crossref import CrossrefWork
 from backend.app.discovery import DiscoveryService, ProviderResult
 from backend.app.evaluation import EvaluationService
 from backend.app.literature import LiteratureService
-from backend.app.rag import Chunk, RagStore
+from backend.app.rag import Chunk, PaperMetadata, RagStore
 from backend.app.semantic_scholar import SemanticScholarClient, SemanticScholarWork
 from backend.app.schemas import LiteratureRequest, StudyRequest
 from backend.app.study import StudyService
@@ -282,6 +282,31 @@ def test_reindex_uploads_rebuilds_store(tmp_path: Path) -> None:
     assert len(documents) == 1
     assert documents[0].filename == "manual.pdf"
     assert results
+
+
+def test_reindex_uploads_preserves_metadata_documents(tmp_path: Path) -> None:
+    upload_dir = tmp_path / "uploads"
+    index_dir = tmp_path / "index"
+    upload_dir.mkdir(parents=True)
+    (upload_dir / "manual.pdf").write_bytes(
+        make_pdf_with_text("Manual uploads can be reindexed with metadata records.")
+    )
+    store = RagStore(upload_dir=upload_dir, index_dir=index_dir, retrieval_mode="tfidf")
+    metadata_document = store.add_metadata_document(
+        "external.metadata",
+        PaperMetadata(
+            title="External Metadata Paper",
+            doi="10.1234/external",
+            abstract="Metadata-only records should survive upload reindexing.",
+            metadata_source="openalex",
+        ),
+    )
+
+    documents = store.reindex_uploads()
+
+    assert {document.document_id for document in documents} >= {metadata_document.document_id}
+    assert any(document.filename == "manual.pdf" for document in documents)
+    assert store.search("metadata-only records survive", top_k=1)
 
 
 def test_metadata_extraction_finds_core_fields(tmp_path: Path) -> None:
@@ -645,6 +670,71 @@ def test_literature_methods_endpoint(monkeypatch, tmp_path: Path) -> None:
     assert data["answer_mode"] == "retrieval_only"
     assert data["papers"]
     assert data["sources"]
+
+
+def test_literature_topic_gate_rejects_method_similar_wrong_domain(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    service = LiteratureService(store=store, answerer=Answerer())
+    mulberry = store.add_metadata_document(
+        "mulberry.metadata",
+        PaperMetadata(
+            title="Mulberry leaf disease detection using explainable deep learning",
+            abstract="This paper studies mulberry leaf disease detection and classification with CNN models.",
+            keywords=["mulberry", "leaf disease", "detection"],
+            metadata_source="openalex",
+        ),
+    )
+    store.add_metadata_document(
+        "water.metadata",
+        PaperMetadata(
+            title="Water quality detection using deep learning",
+            abstract="This paper studies water quality detection with neural models and experiments.",
+            keywords=["water quality", "detection", "deep learning"],
+            metadata_source="openalex",
+        ),
+    )
+    store.add_metadata_document(
+        "biometric.metadata",
+        PaperMetadata(
+            title="Biometric liveness detection using convolutional neural networks",
+            abstract="This paper studies biometric detection and recognition with CNN models.",
+            keywords=["biometric", "detection", "cnn"],
+            metadata_source="openalex",
+        ),
+    )
+
+    response = service.search(
+        LiteratureRequest(query="mulberry leaf disease detection", focus="deep learning methods", top_k_documents=5, evidence_k=10)
+    )
+
+    assert [paper.document_id for paper in response.papers] == [mulberry.document_id]
+    assert all("water" not in source.text.lower() for source in response.sources)
+    assert all("biometric" not in source.text.lower() for source in response.sources)
+
+
+def test_literature_methods_reports_insufficient_direct_papers(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    service = LiteratureService(store=store, answerer=Answerer())
+    store.add_metadata_document(
+        "water.metadata",
+        PaperMetadata(
+            title="Water quality detection using deep learning",
+            abstract="This paper studies water quality detection with CNN models.",
+            keywords=["water quality", "detection", "deep learning"],
+            metadata_source="openalex",
+        ),
+    )
+
+    response = service.methods(
+        LiteratureRequest(query="mulberry leaf disease detection", focus="deep learning methods", top_k_documents=5, evidence_k=10)
+    )
+
+    assert response.answer_mode == "no_relevant_papers"
+    assert response.papers == []
+    assert response.sources == []
+    assert "没有使用其他领域论文做方法迁移" in response.answer
 
 
 def test_literature_compare_endpoint(monkeypatch, tmp_path: Path) -> None:

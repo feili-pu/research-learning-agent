@@ -77,6 +77,7 @@ class RagStore:
         self.embedding_model_name = embedding_model_name
         self.embedding_model = None
         self.embedding_matrix = None
+        self.semantic_index_attempted = False
         self.vectorizer = TfidfVectorizer()
         self.tfidf_matrix = None
         self._load_store()
@@ -172,6 +173,9 @@ class RagStore:
         return sorted(documents, key=lambda document: self._document_sort_key(document, sort_by))
 
     def reindex_uploads(self) -> list[Document]:
+        metadata_documents = [document for document in self.documents.values() if document.pages == 0]
+        metadata_document_ids = {document.document_id for document in metadata_documents}
+        metadata_chunks = [chunk for chunk in self.chunks if chunk.document_id in metadata_document_ids]
         self.documents = {}
         self.chunks = []
 
@@ -188,6 +192,10 @@ class RagStore:
             )
             self.chunks.extend(new_chunks)
 
+        for document in metadata_documents:
+            self.documents[document.document_id] = document
+        self.chunks.extend(metadata_chunks)
+        self._ensure_metadata_chunks()
         self._mark_duplicates()
         self._save_store()
         self._rebuild_index()
@@ -205,11 +213,20 @@ class RagStore:
         self._save_store()
         return self.list_documents()
 
-    def search(self, question: str, top_k: int, section_filter: str | None = None) -> list[SearchResult]:
+    def search(
+        self,
+        question: str,
+        top_k: int,
+        section_filter: str | None = None,
+        allow_semantic: bool = True,
+    ) -> list[SearchResult]:
         if not self.chunks:
             return []
 
-        if self.active_retrieval_mode == "semantic" and self.embedding_matrix is not None:
+        if allow_semantic and self.retrieval_mode == "semantic" and self.embedding_matrix is None:
+            self._ensure_semantic_index()
+
+        if allow_semantic and self.active_retrieval_mode == "semantic" and self.embedding_matrix is not None:
             scores = self._semantic_scores(question)
         elif self.tfidf_matrix is not None:
             scores = self._tfidf_scores(question)
@@ -252,11 +269,15 @@ class RagStore:
         self.tfidf_matrix = self.vectorizer.fit_transform(texts) if texts else None
         self.embedding_matrix = None
         self.active_retrieval_mode = "tfidf"
+        self.semantic_index_attempted = False
 
-        if texts and self.retrieval_mode == "semantic":
-            self.embedding_matrix = self._build_embedding_matrix(texts)
-            if self.embedding_matrix is not None:
-                self.active_retrieval_mode = "semantic"
+    def _ensure_semantic_index(self) -> None:
+        if self.semantic_index_attempted or not self.chunks or self.retrieval_mode != "semantic":
+            return
+        self.semantic_index_attempted = True
+        self.embedding_matrix = self._build_embedding_matrix([chunk.text for chunk in self.chunks])
+        if self.embedding_matrix is not None:
+            self.active_retrieval_mode = "semantic"
 
     def _build_embedding_matrix(self, texts: list[str]):
         sentence_transformer = _load_sentence_transformer()
