@@ -16,6 +16,7 @@ The current version focuses on a local paper-learning workflow:
 6. Generate study summaries, key points, and reading plans with an optional LLM.
 7. Use a scientific-style web frontend for daily testing.
 8. Manage the backend paper library with extracted metadata and duplicate markers.
+9. Compare papers within a research direction using retrieved evidence.
 
 ## Version Notes
 
@@ -280,11 +281,84 @@ sorting by title, year, citations, references, source, or filename
 
 V12 is intentionally local-only. It does not connect to Elsevier or other journal APIs yet. The goal is to make the existing backend paper library easier to manage before adding more external data sources.
 
+### V13
+
+V13 adds a lightweight evaluation workflow for direction-level retrieval.
+
+The backend now has a small built-in evaluation set. Each case runs the existing literature search pipeline, checks whether the retrieved papers and evidence chunks cover expected terms, and returns a score.
+
+New V13 endpoint:
+
+```text
+POST /evaluation/literature
+```
+
+The frontend adds a `检索评估` mode that shows:
+
+```text
+passed cases
+average score
+matched terms
+missing terms
+paper count
+evidence count
+```
+
+This is not a full academic benchmark yet. It is a local regression check that helps detect whether later retrieval changes make direction-level search better or worse.
+
+### V14
+
+V14 adds a paper comparison workflow for direction-level research.
+
+New V14 endpoint:
+
+```text
+POST /literature/compare
+```
+
+Given a research direction and focus, the system retrieves representative papers, ranks them, keeps evidence chunks, and asks the optional LLM to compare:
+
+```text
+research problem
+method differences
+experiment and data clues
+strengths
+limitations
+reproducible follow-up ideas
+```
+
+If no LLM is configured, the endpoint still returns the relevant paper ranking and evidence chunks in retrieval-only mode.
+
+### V15
+
+V15 adds external research discovery.
+
+Instead of only working from PDFs that are already in the local library, the app can search public literature metadata sources for candidate papers:
+
+```text
+Semantic Scholar
+Crossref
+arXiv
+OpenAlex
+```
+
+New V15 endpoints:
+
+```text
+POST /discovery/search
+POST /discovery/import-metadata
+```
+
+`/discovery/search` returns external candidate papers with title, authors, year, venue, DOI, abstract, citation/reference counts, source URL, PDF URL when available, open-access marker, and an import marker when the same DOI or title already exists locally.
+
+`/discovery/import-metadata` imports a selected candidate into the local paper library as a metadata-only record. It does not download the PDF automatically; the imported record has `pages=0` and `chunks=0` until a PDF is uploaded or linked in a later version.
+
 ## Project Structure
 
 ```text
 backend/
   app/
+    discovery.py
     main.py
     rag.py
     schemas.py
@@ -463,6 +537,7 @@ POST /literature/search
 POST /literature/review
 POST /literature/methods
 POST /literature/details
+POST /literature/compare
 ```
 
 Example JSON body:
@@ -484,6 +559,46 @@ Use `/literature/review` for a direction-level literature overview.
 Use `/literature/methods` when you want method categories, technical details, advantages, limitations, and corresponding papers.
 
 Use `/literature/details` when you want a focused briefing for proposal writing, reproduction, or deeper reading.
+
+Use `/literature/compare` when you want to compare representative papers on research problems, methods, experiments, strengths, limitations, and follow-up ideas.
+
+### External Literature Discovery
+
+```text
+POST /discovery/search
+POST /discovery/import-metadata
+```
+
+Example search body:
+
+```json
+{
+  "query": "graph neural networks for recommendation",
+  "focus": "survey and benchmark papers",
+  "sources": ["semantic_scholar", "crossref", "arxiv", "openalex"],
+  "limit_per_source": 5
+}
+```
+
+Use `/discovery/search` to find candidate papers outside the local library. Use `/discovery/import-metadata` to save a selected candidate into the local library as metadata before you upload the PDF.
+
+### Literature Retrieval Evaluation
+
+```text
+POST /evaluation/literature
+```
+
+Example JSON body:
+
+```json
+{
+  "top_k_documents": 5,
+  "evidence_k": 18,
+  "section_filter": null
+}
+```
+
+This runs built-in evaluation cases and returns per-case matched terms, missing terms, score, papers, and evidence chunks.
 
 ## How V1 Works
 
@@ -570,10 +685,33 @@ paper library filters
   -> frontend displays a smaller, more manageable paper list
 ```
 
+## How V13 Works
+
+```text
+built-in evaluation cases
+  -> run literature search for each case
+  -> collect returned papers and evidence chunks
+  -> compare retrieved evidence against expected terms
+  -> compute per-case score and pass/fail
+  -> compute average score across cases
+  -> frontend displays the evaluation report
+```
+
+## How V14 Works
+
+```text
+research direction
+  -> retrieve candidate chunks from the paper library
+  -> group chunks into paper-level candidates
+  -> rank representative papers
+  -> build a comparison prompt from the selected evidence
+  -> optional LLM writes a paper comparison
+  -> frontend displays the comparison, paper ranking, and evidence chunks
+```
+
 ## Next Milestones
 
-1. Add evaluation data for direction-level retrieval quality.
-2. Add paper comparison workflows.
-3. Add external API mock providers for Elsevier, Scopus, ScienceDirect, arXiv, and Semantic Scholar.
-4. Add real provider connectors when API keys and access permissions are available.
-5. Add section extraction evaluation for PDFs with unusual layouts.
+1. Add safe open-access PDF download for discovery results.
+2. Add BibTeX / Markdown export for selected papers.
+3. Add paper status labels such as unread, reading, read, ignored, and priority.
+4. Add external provider adapters for Elsevier, Scopus, and ScienceDirect when API keys are available.

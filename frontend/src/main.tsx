@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import {
   BookOpen,
+  Compass,
   DatabaseZap,
   FileSearch,
   FileText,
@@ -12,30 +13,37 @@ import {
   MessageSquareText,
   Microscope,
   Network,
+  Plus,
   RefreshCw,
   Search,
   Upload
 } from "lucide-react";
 import {
   askQuestion,
+  DiscoveryPaper,
+  DiscoveryResponse,
   DocumentFilters,
   DocumentSummary,
   enrichMetadata,
   getDocuments,
+  importDiscoveredPaper,
   LiteratureReviewResponse,
   LiteratureSearchResponse,
+  LiteratureEvaluationResponse,
   PaperCandidate,
   QueryResponse,
   reindexDocuments,
+  runLiteratureEvaluation,
   runLiteratureTask,
+  searchDiscovery,
   searchLiterature,
   SourceChunk,
   uploadDocument
 } from "./api";
 import "./styles.css";
 
-type Mode = "direction-review" | "method-map" | "detail-briefing" | "paper-search" | "query";
-type AppResult = QueryResponse | LiteratureReviewResponse | LiteratureSearchResponse | null;
+type Mode = "discovery" | "direction-review" | "method-map" | "detail-briefing" | "paper-compare" | "paper-search" | "evaluation" | "query";
+type AppResult = QueryResponse | LiteratureReviewResponse | LiteratureSearchResponse | LiteratureEvaluationResponse | DiscoveryResponse | null;
 
 const sectionOptions = [
   { value: "", label: "全部章节" },
@@ -63,18 +71,24 @@ const sectionLabels: Record<string, string> = {
 };
 
 const modeLabels: Record<Mode, string> = {
+  discovery: "文献发现",
   "direction-review": "方向综述",
   "method-map": "方法梳理",
   "detail-briefing": "细节分析",
+  "paper-compare": "论文对比",
   "paper-search": "相关论文",
+  evaluation: "检索评估",
   query: "自由问答"
 };
 
 const modeDescriptions: Record<Mode, string> = {
+  discovery: "从 Semantic Scholar、Crossref、arXiv 和 OpenAlex 搜索候选论文，并可先导入元数据。",
   "direction-review": "从论文库中找出相关论文，整理研究背景、问题、方法和结论。",
   "method-map": "专门梳理一个方向里的方法类别、技术细节、优缺点和来源论文。",
   "detail-briefing": "围绕关注点展开细节，适合开题、复现或做文献综述前使用。",
+  "paper-compare": "横向比较相关论文的问题、方法、实验线索、优点、局限和可复现切入点。",
   "paper-search": "只返回相关论文排序和证据片段，不生成长回答。",
+  evaluation: "用内置评估集检查方向级检索是否能找回预期证据。",
   query: "直接向当前论文库提问，适合已有明确问题时使用。"
 };
 
@@ -93,6 +107,7 @@ function App() {
   const [duplicateFilter, setDuplicateFilter] = useState("");
   const [documentSort, setDocumentSort] = useState("title");
   const [sectionFilter, setSectionFilter] = useState("");
+  const [discoverySources, setDiscoverySources] = useState(["semantic_scholar", "crossref", "arxiv", "openalex"]);
   const [topKDocuments, setTopKDocuments] = useState(5);
   const [evidenceK, setEvidenceK] = useState(18);
   const [result, setResult] = useState<AppResult>(null);
@@ -237,14 +252,54 @@ function App() {
     }
   }
 
+  async function handleImportDiscoveredPaper(paper: DiscoveryPaper) {
+    setBusy(true);
+    setError("");
+    setStatus(`导入 ${paper.title}`);
+    try {
+      await importDiscoveredPaper(paper);
+      await refreshDocuments();
+      if (result && "errors" in result) {
+        setResult({
+          ...result,
+          papers: result.papers.map((item) =>
+            item === paper ? { ...item, imported_document_id: "imported" } : item
+          )
+        });
+      }
+      setStatus("候选论文元数据已导入");
+    } catch (err) {
+      setError(String(err));
+      setStatus("导入失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggleDiscoverySource(source: string) {
+    setDiscoverySources((current) => {
+      if (current.includes(source)) {
+        const next = current.filter((item) => item !== source);
+        return next.length ? next : current;
+      }
+      return [...current, source];
+    });
+  }
+
   function runCurrentTask() {
+    if (mode === "discovery") {
+      return searchDiscovery(direction, focus, discoverySources, topKDocuments);
+    }
     if (mode === "query") {
       return askQuestion(question, Math.min(evidenceK, 10), sectionFilter);
     }
     if (mode === "paper-search") {
       return searchLiterature(direction, focus, topKDocuments, evidenceK, sectionFilter);
     }
-    const task = mode === "direction-review" ? "review" : mode === "method-map" ? "methods" : "details";
+    if (mode === "evaluation") {
+      return runLiteratureEvaluation(topKDocuments, evidenceK, sectionFilter);
+    }
+    const task = mode === "direction-review" ? "review" : mode === "method-map" ? "methods" : mode === "paper-compare" ? "compare" : "details";
     return runLiteratureTask(task, direction, focus, topKDocuments, evidenceK, sectionFilter);
   }
 
@@ -388,7 +443,7 @@ function App() {
                 onClick={() => setMode(item)}
                 title={modeDescriptions[item]}
               >
-                {item === "query" ? <MessageSquareText size={16} /> : <Network size={16} />}
+                {item === "query" ? <MessageSquareText size={16} /> : item === "discovery" ? <Compass size={16} /> : <Network size={16} />}
                 {modeLabels[item]}
               </button>
             ))}
@@ -402,6 +457,11 @@ function App() {
                 <span>问题</span>
                 <textarea value={question} onChange={(event) => setQuestion(event.target.value)} />
               </label>
+            ) : mode === "evaluation" ? (
+              <label className="field full">
+                <span>评估说明</span>
+                <input value="运行内置方向级检索评估集，检查预期关键词覆盖率。" readOnly />
+              </label>
             ) : (
               <>
                 <label className="field">
@@ -414,18 +474,38 @@ function App() {
                 </label>
               </>
             )}
-            <label className="field compact">
-              <span>章节范围</span>
-              <select value={sectionFilter} onChange={(event) => setSectionFilter(event.target.value)}>
-                {sectionOptions.map((option) => (
-                  <option key={option.value || "all"} value={option.value}>
-                    {option.label}
-                  </option>
+            {mode === "discovery" ? (
+              <div className="source-toggles">
+                {[
+                  ["semantic_scholar", "S2"],
+                  ["crossref", "Crossref"],
+                  ["arxiv", "arXiv"],
+                  ["openalex", "OpenAlex"]
+                ].map(([value, label]) => (
+                  <label key={value}>
+                    <input
+                      type="checkbox"
+                      checked={discoverySources.includes(value)}
+                      onChange={() => toggleDiscoverySource(value)}
+                    />
+                    <span>{label}</span>
+                  </label>
                 ))}
-              </select>
-            </label>
+              </div>
+            ) : (
+              <label className="field compact">
+                <span>章节范围</span>
+                <select value={sectionFilter} onChange={(event) => setSectionFilter(event.target.value)}>
+                  {sectionOptions.map((option) => (
+                    <option key={option.value || "all"} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className="field compact">
-              <span>候选论文：{topKDocuments}</span>
+              <span>{mode === "discovery" ? "每源数量" : "候选论文"}：{topKDocuments}</span>
               <input
                 type="range"
                 min={1}
@@ -436,12 +516,13 @@ function App() {
               />
             </label>
             <label className="field compact">
-              <span>证据片段：{mode === "query" ? Math.min(evidenceK, 10) : evidenceK}</span>
+              <span>{mode === "discovery" ? "外部发现" : "证据片段"}：{mode === "query" ? Math.min(evidenceK, 10) : evidenceK}</span>
               <input
                 type="range"
                 min={3}
                 max={40}
                 value={evidenceK}
+                disabled={mode === "discovery"}
                 onChange={(event) => setEvidenceK(Number(event.target.value))}
               />
             </label>
@@ -453,7 +534,7 @@ function App() {
 
           {error && <div className="error-box">{error}</div>}
 
-          <ResultView result={result} />
+          <ResultView result={result} onImportDiscoveredPaper={handleImportDiscoveredPaper} busy={busy} />
         </section>
       </div>
     </main>
@@ -470,7 +551,15 @@ function Metric({ icon, label, value }: { icon: ReactNode; label: string; value:
   );
 }
 
-function ResultView({ result }: { result: AppResult }) {
+function ResultView({
+  result,
+  onImportDiscoveredPaper,
+  busy
+}: {
+  result: AppResult;
+  onImportDiscoveredPaper: (paper: DiscoveryPaper) => void;
+  busy: boolean;
+}) {
   if (!result) {
     return (
       <section className="result-empty">
@@ -478,6 +567,14 @@ function ResultView({ result }: { result: AppResult }) {
         <p>输入研究方向后运行，系统会先找相关论文，再整理答案和证据。</p>
       </section>
     );
+  }
+
+  if ("cases" in result) {
+    return <EvaluationView result={result} />;
+  }
+
+  if ("errors" in result) {
+    return <DiscoveryView result={result} onImport={onImportDiscoveredPaper} busy={busy} />;
   }
 
   const papers = "papers" in result ? result.papers : [];
@@ -505,6 +602,91 @@ function ResultView({ result }: { result: AppResult }) {
           ))}
         </aside>
       </div>
+    </section>
+  );
+}
+
+function DiscoveryView({
+  result,
+  onImport,
+  busy
+}: {
+  result: DiscoveryResponse;
+  onImport: (paper: DiscoveryPaper) => void;
+  busy: boolean;
+}) {
+  return (
+    <section className="result-stack">
+      <article className="paper-panel">
+        <div className="panel-heading">
+          <h2>外部候选论文</h2>
+          <span className="subtle-count">{result.papers.length} 篇 · {result.sources.join(" / ")}</span>
+        </div>
+        {result.errors.length > 0 && <div className="warning-box">{result.errors.join("；")}</div>}
+        <div className="paper-grid discovery-grid">
+          {result.papers.map((paper) => (
+            <article className="paper-card discovery-card" key={`${paper.source}-${paper.source_id || paper.title}`}>
+              <div className="paper-rank">{paper.source.slice(0, 2).toUpperCase()}</div>
+              <div>
+                <strong>{paper.title}</strong>
+                <span>{discoveryLine(paper)}</span>
+                {paper.doi && <span>DOI {paper.doi}</span>}
+                {paper.fields_of_study.length > 0 && <span>{paper.fields_of_study.slice(0, 4).join(" · ")}</span>}
+                <p>{paper.abstract || "暂无摘要。"}</p>
+                <div className="paper-actions">
+                  {paper.external_url && (
+                    <a href={paper.external_url} target="_blank" rel="noreferrer">
+                      查看来源
+                    </a>
+                  )}
+                  {paper.pdf_url && (
+                    <a href={paper.pdf_url} target="_blank" rel="noreferrer">
+                      PDF
+                    </a>
+                  )}
+                  <button
+                    className="secondary-button"
+                    onClick={() => onImport(paper)}
+                    disabled={busy || Boolean(paper.imported_document_id)}
+                  >
+                    <Plus size={14} />
+                    {paper.imported_document_id ? "已导入" : "导入元数据"}
+                  </button>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      </article>
+    </section>
+  );
+}
+
+function EvaluationView({ result }: { result: LiteratureEvaluationResponse }) {
+  return (
+    <section className="result-stack">
+      <article className="answer-panel">
+        <div className="answer-meta">
+          <span>{result.retrieval_mode}</span>
+          <span>{result.passed_cases}/{result.total_cases} passed</span>
+          <span>avg {result.average_score.toFixed(2)}</span>
+        </div>
+        <div className="evaluation-grid">
+          {result.cases.map((item) => (
+            <article className="evaluation-card" key={item.name}>
+              <div className="evaluation-head">
+                <strong>{item.name}</strong>
+                <span className={item.passed ? "pass" : "warn"}>{item.score.toFixed(2)}</span>
+              </div>
+              <p>{item.query}</p>
+              <small>{item.focus || "no focus"} · {item.section_filter || "all sections"}</small>
+              <span>命中：{item.matched_terms.length ? item.matched_terms.join(", ") : "none"}</span>
+              <span>缺失：{item.missing_terms.length ? item.missing_terms.join(", ") : "none"}</span>
+              <span>论文：{item.papers.length} · 证据：{item.sources.length}</span>
+            </article>
+          ))}
+        </div>
+      </article>
     </section>
   );
 }
@@ -603,6 +785,18 @@ function sourceLine(metadata: {
     metadata.citation_count !== null ? `${metadata.citation_count} citations` : null,
     metadata.metadata_match_score !== null ? `match ${metadata.metadata_match_score.toFixed(2)}` : null,
     metadata.external_url
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+function discoveryLine(paper: DiscoveryPaper) {
+  const parts = [
+    paper.year ? String(paper.year) : null,
+    paper.venue,
+    paper.authors,
+    `${paper.relevance_score.toFixed(2)} relevance`,
+    paper.citation_count !== null ? `${paper.citation_count} citations` : null,
+    paper.is_open_access ? "open access" : null
   ].filter(Boolean);
   return parts.join(" · ");
 }

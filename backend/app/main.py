@@ -4,34 +4,102 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 
 from .answerer import Answerer
 from .crossref import CrossrefClient
+from .discovery import DiscoveryService
+from .evaluation import EvaluationService
 from .literature import LiteratureService
+from .presenters import document_summary, paper_metadata, source_chunks
 from .rag import RagStore
 from .semantic_scholar import SemanticScholarClient
 from .schemas import (
+    DiscoveryImportRequest,
+    DiscoveryImportResponse,
+    DiscoveryRequest,
+    DiscoveryResponse,
     DocumentIngestResponse,
     DocumentSummary,
+    LiteratureEvaluationRequest,
+    LiteratureEvaluationResponse,
     LiteratureRequest,
     LiteratureReviewResponse,
     LiteratureSearchResponse,
     QueryRequest,
     QueryResponse,
-    SourceChunk,
     StudyRequest,
     StudyResponse,
-    PaperMetadata,
 )
 from .study import StudyService
 
 app = FastAPI(
     title="Research Learning Agent",
     description="Local RAG API for learning from uploaded PDFs.",
-    version="0.12.0",
+    version="0.15.0",
 )
 
-store = RagStore(upload_dir=Path("data/uploads"))
-answerer = Answerer()
-study_service = StudyService(store=store, answerer=answerer)
-literature_service = LiteratureService(store=store, answerer=answerer)
+store: RagStore | None = None
+answerer: Answerer | None = None
+study_service: StudyService | None = None
+literature_service: LiteratureService | None = None
+evaluation_service: EvaluationService | None = None
+discovery_service: DiscoveryService | None = None
+
+
+def get_store() -> RagStore:
+    global store
+    if store is None:
+        store = RagStore(upload_dir=Path("data/uploads"))
+    return store
+
+
+def get_answerer() -> Answerer:
+    global answerer
+    if answerer is None:
+        answerer = Answerer()
+    return answerer
+
+
+def get_study_service() -> StudyService:
+    global study_service
+    current_store = get_store()
+    current_answerer = get_answerer()
+    if (
+        study_service is None
+        or study_service.store is not current_store
+        or study_service.answerer is not current_answerer
+    ):
+        study_service = StudyService(store=current_store, answerer=current_answerer)
+    return study_service
+
+
+def get_literature_service() -> LiteratureService:
+    global literature_service
+    current_store = get_store()
+    current_answerer = get_answerer()
+    if (
+        literature_service is None
+        or literature_service.store is not current_store
+        or literature_service.answerer is not current_answerer
+    ):
+        literature_service = LiteratureService(store=current_store, answerer=current_answerer)
+    return literature_service
+
+
+def get_evaluation_service() -> EvaluationService:
+    global evaluation_service
+    current_literature_service = get_literature_service()
+    if (
+        evaluation_service is None
+        or evaluation_service.literature_service is not current_literature_service
+    ):
+        evaluation_service = EvaluationService(literature_service=current_literature_service)
+    return evaluation_service
+
+
+def get_discovery_service() -> DiscoveryService:
+    global discovery_service
+    current_store = get_store()
+    if discovery_service is None or discovery_service.store is not current_store:
+        discovery_service = DiscoveryService(store=current_store)
+    return discovery_service
 
 
 @app.get("/health")
@@ -48,13 +116,13 @@ async def upload_document(file: UploadFile = File(...)) -> DocumentIngestRespons
     if not content:
         raise HTTPException(status_code=400, detail="The uploaded file is empty.")
 
-    document = store.ingest_pdf(file.filename, content)
+    document = get_store().ingest_pdf(file.filename, content)
     return DocumentIngestResponse(
         document_id=document.document_id,
         filename=document.filename,
         pages=document.pages,
         chunks=document.chunks,
-        metadata=_paper_metadata(document.metadata),
+        metadata=paper_metadata(document.metadata),
     )
 
 
@@ -70,8 +138,8 @@ def list_documents(
     sort_by: str = "title",
 ) -> list[DocumentSummary]:
     return [
-        _document_summary(document)
-        for document in store.filter_documents(
+        document_summary(document)
+        for document in get_store().filter_documents(
             query=query,
             keyword=keyword,
             year_from=year_from,
@@ -86,106 +154,87 @@ def list_documents(
 
 @app.post("/documents/reindex", response_model=list[DocumentSummary])
 def reindex_documents() -> list[DocumentSummary]:
-    return [_document_summary(document) for document in store.reindex_uploads()]
+    return [document_summary(document) for document in get_store().reindex_uploads()]
 
 
 @app.post("/documents/enrich-metadata", response_model=list[DocumentSummary])
 def enrich_document_metadata() -> list[DocumentSummary]:
     return [
-        _document_summary(document)
-        for document in store.enrich_metadata(CrossrefClient(), SemanticScholarClient())
+        document_summary(document)
+        for document in get_store().enrich_metadata(CrossrefClient(), SemanticScholarClient())
     ]
 
 
 @app.post("/query", response_model=QueryResponse)
 def query_documents(request: QueryRequest) -> QueryResponse:
-    results = store.search(request.question, request.top_k, request.section_filter)
-    answer = answerer.answer(request.question, results)
+    current_store = get_store()
+    results = current_store.search(request.question, request.top_k, request.section_filter)
+    answer = get_answerer().answer(request.question, results)
 
     return QueryResponse(
         question=request.question,
-        retrieval_mode=store.active_retrieval_mode,
+        retrieval_mode=current_store.active_retrieval_mode,
         answer_mode=answer.answer_mode,
         model=answer.model,
         answer=answer.answer,
-        sources=[
-            SourceChunk(
-                document_id=result.chunk.document_id,
-                filename=result.chunk.filename,
-                page=result.chunk.page,
-                chunk_id=result.chunk.chunk_id,
-                score=result.score,
-                text=result.chunk.text,
-                section=result.chunk.section,
-            )
-            for result in results
-        ],
+        sources=source_chunks(results),
     )
 
 
 @app.post("/study/summary", response_model=StudyResponse)
 def study_summary(request: StudyRequest) -> StudyResponse:
-    return study_service.summary(request)
+    return get_study_service().summary(request)
 
 
 @app.post("/study/key-points", response_model=StudyResponse)
 def study_key_points(request: StudyRequest) -> StudyResponse:
-    return study_service.key_points(request)
+    return get_study_service().key_points(request)
 
 
 @app.post("/study/reading-plan", response_model=StudyResponse)
 def study_reading_plan(request: StudyRequest) -> StudyResponse:
-    return study_service.reading_plan(request)
+    return get_study_service().reading_plan(request)
 
 
 @app.post("/literature/search", response_model=LiteratureSearchResponse)
 def literature_search(request: LiteratureRequest) -> LiteratureSearchResponse:
-    return literature_service.search(request)
+    return get_literature_service().search(request)
 
 
 @app.post("/literature/review", response_model=LiteratureReviewResponse)
 def literature_review(request: LiteratureRequest) -> LiteratureReviewResponse:
-    return literature_service.review(request)
+    return get_literature_service().review(request)
 
 
 @app.post("/literature/methods", response_model=LiteratureReviewResponse)
 def literature_methods(request: LiteratureRequest) -> LiteratureReviewResponse:
-    return literature_service.methods(request)
+    return get_literature_service().methods(request)
 
 
 @app.post("/literature/details", response_model=LiteratureReviewResponse)
 def literature_details(request: LiteratureRequest) -> LiteratureReviewResponse:
-    return literature_service.details(request)
+    return get_literature_service().details(request)
 
 
-def _document_summary(document) -> DocumentSummary:
-    return DocumentSummary(
-        document_id=document.document_id,
-        filename=document.filename,
-        pages=document.pages,
-        chunks=document.chunks,
-        metadata=_paper_metadata(document.metadata),
-    )
+@app.post("/literature/compare", response_model=LiteratureReviewResponse)
+def literature_compare(request: LiteratureRequest) -> LiteratureReviewResponse:
+    return get_literature_service().compare(request)
 
 
-def _paper_metadata(metadata) -> PaperMetadata:
-    return PaperMetadata(
-        title=metadata.title,
-        authors=metadata.authors,
-        year=metadata.year,
-        venue=metadata.venue,
-        doi=metadata.doi,
-        abstract=metadata.abstract,
-        publisher=metadata.publisher,
-        external_url=metadata.external_url,
-        reference_count=metadata.reference_count,
-        citation_count=metadata.citation_count,
-        fields_of_study=metadata.fields_of_study,
-        metadata_confidence=metadata.metadata_confidence,
-        metadata_match_score=metadata.metadata_match_score,
-        metadata_source=metadata.metadata_source,
-        is_enriched=metadata.is_enriched,
-        keywords=metadata.keywords,
-        duplicate_of=metadata.duplicate_of,
-        duplicate_reason=metadata.duplicate_reason,
+@app.post("/evaluation/literature", response_model=LiteratureEvaluationResponse)
+def evaluate_literature(request: LiteratureEvaluationRequest) -> LiteratureEvaluationResponse:
+    return get_evaluation_service().evaluate_literature(request)
+
+
+@app.post("/discovery/search", response_model=DiscoveryResponse)
+def discovery_search(request: DiscoveryRequest) -> DiscoveryResponse:
+    return get_discovery_service().search(request)
+
+
+@app.post("/discovery/import-metadata", response_model=DiscoveryImportResponse)
+def discovery_import_metadata(request: DiscoveryImportRequest) -> DiscoveryImportResponse:
+    document = get_discovery_service().import_metadata(request.paper)
+    return DiscoveryImportResponse(
+        document=document_summary(document),
+        duplicate=bool(document.metadata.duplicate_of),
     )

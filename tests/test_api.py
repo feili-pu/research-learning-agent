@@ -1,10 +1,13 @@
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+import numpy as np
 
 from backend.app.answerer import Answerer
 from backend.app import main
 from backend.app.crossref import CrossrefWork
+from backend.app.discovery import DiscoveryService, ProviderResult
+from backend.app.evaluation import EvaluationService
 from backend.app.literature import LiteratureService
 from backend.app.rag import Chunk, RagStore
 from backend.app.semantic_scholar import SemanticScholarClient, SemanticScholarWork
@@ -81,7 +84,15 @@ def test_upload_and_query_pdf(monkeypatch, tmp_path: Path) -> None:
     assert "section" in query_response.json()["sources"][0]
 
 
-def test_semantic_store_can_build_index(tmp_path: Path) -> None:
+def test_semantic_store_can_build_index(monkeypatch, tmp_path: Path) -> None:
+    class FakeSentenceTransformer:
+        def __init__(self, model_name: str) -> None:
+            self.model_name = model_name
+
+        def encode(self, texts, normalize_embeddings=True, show_progress_bar=False):
+            return np.array([[1.0, 0.0] for _ in texts])
+
+    monkeypatch.setattr("backend.app.rag._load_sentence_transformer", lambda: FakeSentenceTransformer)
     store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="semantic")
     pdf_bytes = make_pdf_with_text(
         "Retrieval augmented generation grounds model answers with search results."
@@ -633,3 +644,168 @@ def test_literature_methods_endpoint(monkeypatch, tmp_path: Path) -> None:
     assert data["answer_mode"] == "retrieval_only"
     assert data["papers"]
     assert data["sources"]
+
+
+def test_literature_compare_endpoint(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    main.store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    main.answerer = Answerer()
+    main.study_service = StudyService(store=main.store, answerer=main.answerer)
+    main.literature_service = LiteratureService(store=main.store, answerer=main.answerer)
+    client = TestClient(main.app)
+    main.store.ingest_pdf(
+        "graph-rag-a.pdf",
+        make_pdf_with_text(
+            "Graph RAG paper studies retrieval augmented generation with graph search and neighborhood evidence."
+        ),
+    )
+    main.store.ingest_pdf(
+        "graph-rag-b.pdf",
+        make_pdf_with_text(
+            "Another Graph RAG paper compares graph retrieval, reranking, experiments, and limitations."
+        ),
+    )
+
+    response = client.post(
+        "/literature/compare",
+        json={
+            "query": "graph retrieval augmented generation",
+            "focus": "method differences and limitations",
+            "top_k_documents": 2,
+            "evidence_k": 6,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["task"] == "paper_compare"
+    assert data["answer_mode"] == "retrieval_only"
+    assert len(data["papers"]) >= 1
+    assert data["sources"]
+
+
+def test_literature_evaluation_endpoint(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    main.store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    main.answerer = Answerer()
+    main.literature_service = LiteratureService(store=main.store, answerer=main.answerer)
+    main.evaluation_service = EvaluationService(literature_service=main.literature_service)
+    client = TestClient(main.app)
+    main.store.ingest_pdf(
+        "water-methods.pdf",
+        make_pdf_with_text(
+            "Abstract water quality prediction. Methods model training for water quality remote sensing experiments."
+        ),
+    )
+    main.store.ingest_pdf(
+        "biometric-security.pdf",
+        make_pdf_with_text(
+            "Abstract biometric security. Template protection methods discuss biometric template security limitations."
+        ),
+    )
+
+    response = client.post(
+        "/evaluation/literature",
+        json={"top_k_documents": 3, "evidence_k": 8},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_cases"] == 3
+    assert "average_score" in data
+    assert data["cases"]
+    assert {"name", "matched_terms", "missing_terms", "score", "passed"} <= set(data["cases"][0])
+
+
+def test_discovery_service_dedupes_and_marks_imported(tmp_path: Path) -> None:
+    class FakeProvider:
+        def search(self, query: str, limit: int):
+            return [
+                ProviderResult(
+                    source="semantic_scholar",
+                    source_id="s2-1",
+                    title="Graph Retrieval Augmented Generation",
+                    authors="Alice Zhang",
+                    year=2025,
+                    doi="10.1234/graph-rag",
+                    abstract="Graph retrieval for grounded generation.",
+                    citation_count=12,
+                    relevance_score=0.91,
+                ),
+                ProviderResult(
+                    source="crossref",
+                    source_id="10.1234/graph-rag",
+                    title="Graph Retrieval Augmented Generation",
+                    authors="Alice Zhang",
+                    year=2025,
+                    doi="10.1234/graph-rag",
+                    abstract="Duplicate DOI record.",
+                    citation_count=10,
+                    relevance_score=0.75,
+                ),
+            ]
+
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    service = DiscoveryService(store=store, providers={"semantic_scholar": FakeProvider()})
+
+    response = service.search(
+        main.DiscoveryRequest(query="graph retrieval augmented generation", sources=["semantic_scholar"])
+    )
+    document = service.import_metadata(response.papers[0])
+    response_after_import = service.search(
+        main.DiscoveryRequest(query="graph retrieval augmented generation", sources=["semantic_scholar"])
+    )
+
+    assert len(response.papers) == 1
+    assert response.papers[0].doi == "10.1234/graph-rag"
+    assert document.pages == 0
+    assert document.chunks == 0
+    assert document.metadata.metadata_source == "semantic_scholar"
+    assert response_after_import.papers[0].imported_document_id == document.document_id
+
+
+def test_discovery_endpoint_search_and_import(monkeypatch, tmp_path: Path) -> None:
+    class FakeProvider:
+        def search(self, query: str, limit: int):
+            return [
+                ProviderResult(
+                    source="openalex",
+                    source_id="https://openalex.org/W1",
+                    title="Water Quality Prediction With Neural Networks",
+                    authors="Bob Li",
+                    year=2024,
+                    venue="Journal of Water AI",
+                    abstract="Neural models for water quality prediction.",
+                    external_url="https://openalex.org/W1",
+                    fields_of_study=["Environmental Science"],
+                    keywords=["water quality", "neural networks"],
+                    relevance_score=0.88,
+                )
+            ]
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    main.store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    main.answerer = Answerer()
+    main.discovery_service = None
+    monkeypatch.setattr(
+        main,
+        "DiscoveryService",
+        lambda store: DiscoveryService(store=store, providers={"openalex": FakeProvider()}),
+    )
+    client = TestClient(main.app)
+
+    search_response = client.post(
+        "/discovery/search",
+        json={"query": "water quality prediction", "sources": ["openalex"], "limit_per_source": 3},
+    )
+    paper = search_response.json()["papers"][0]
+    import_response = client.post("/discovery/import-metadata", json={"paper": paper})
+    documents_response = client.get("/documents", params={"source": "openalex"})
+
+    assert search_response.status_code == 200
+    assert search_response.json()["papers"][0]["source"] == "openalex"
+    assert import_response.status_code == 200
+    assert import_response.json()["document"]["metadata"]["title"] == "Water Quality Prediction With Neural Networks"
+    assert import_response.json()["document"]["chunks"] == 0
+    assert documents_response.status_code == 200
+    assert documents_response.json()[0]["metadata"]["metadata_source"] == "openalex"

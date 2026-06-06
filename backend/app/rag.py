@@ -9,11 +9,6 @@ from pypdf import PdfReader
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-try:
-    from sentence_transformers import SentenceTransformer
-except ImportError:
-    SentenceTransformer = None
-
 
 @dataclass
 class Chunk:
@@ -109,6 +104,20 @@ class RagStore:
         self._mark_duplicates()
         self._save_store()
         self._rebuild_index()
+        return document
+
+    def add_metadata_document(self, filename: str, metadata: PaperMetadata) -> Document:
+        document_id = uuid4().hex
+        document = Document(
+            document_id=document_id,
+            filename=self._safe_filename(filename),
+            pages=0,
+            chunks=0,
+            metadata=metadata,
+        )
+        self.documents[document_id] = document
+        self._mark_duplicates()
+        self._save_store()
         return document
 
     def list_documents(self) -> list[Document]:
@@ -235,11 +244,12 @@ class RagStore:
                 self.active_retrieval_mode = "semantic"
 
     def _build_embedding_matrix(self, texts: list[str]):
-        if SentenceTransformer is None:
+        sentence_transformer = _load_sentence_transformer()
+        if sentence_transformer is None:
             return None
 
         if self.embedding_model is None:
-            self.embedding_model = SentenceTransformer(self.embedding_model_name)
+            self.embedding_model = sentence_transformer(self.embedding_model_name)
 
         return self.embedding_model.encode(
             texts,
@@ -757,3 +767,11 @@ class RagStore:
             return None
         normalized = re.sub(r"[^a-z0-9]+", "", value.lower())
         return normalized if len(normalized) >= 12 else None
+
+
+def _load_sentence_transformer():
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError:
+        return None
+    return SentenceTransformer

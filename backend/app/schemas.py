@@ -117,3 +117,75 @@ class LiteratureReviewResponse(BaseModel):
     answer: str
     papers: list[PaperCandidate]
     sources: list[SourceChunk]
+
+
+class LiteratureEvaluationRequest(BaseModel):
+    top_k_documents: int = Field(default=5, ge=1, le=10)
+    evidence_k: int = Field(default=18, ge=3, le=40)
+    section_filter: str | None = None
+
+
+class EvaluationCaseResult(BaseModel):
+    name: str
+    query: str
+    focus: str | None
+    section_filter: str | None
+    expected_terms: list[str]
+    matched_terms: list[str]
+    missing_terms: list[str]
+    score: float
+    passed: bool
+    papers: list[PaperCandidate]
+    sources: list[SourceChunk]
+
+
+class LiteratureEvaluationResponse(BaseModel):
+    retrieval_mode: str
+    total_cases: int
+    passed_cases: int
+    average_score: float
+    cases: list[EvaluationCaseResult]
+
+
+class DiscoveryRequest(BaseModel):
+    query: str = Field(min_length=1)
+    focus: str | None = None
+    sources: list[str] = Field(default_factory=lambda: ["semantic_scholar", "crossref", "arxiv", "openalex"])
+    limit_per_source: int = Field(default=5, ge=1, le=20)
+
+
+class DiscoveryPaper(BaseModel):
+    source: str
+    source_id: str | None = None
+    title: str
+    authors: str | None = None
+    year: int | None = None
+    venue: str | None = None
+    doi: str | None = None
+    abstract: str | None = None
+    external_url: str | None = None
+    pdf_url: str | None = None
+    reference_count: int | None = None
+    citation_count: int | None = None
+    fields_of_study: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+    is_open_access: bool = False
+    relevance_score: float = 0.0
+    imported_document_id: str | None = None
+
+
+class DiscoveryResponse(BaseModel):
+    query: str
+    focus: str | None
+    sources: list[str]
+    papers: list[DiscoveryPaper]
+    errors: list[str] = Field(default_factory=list)
+
+
+class DiscoveryImportRequest(BaseModel):
+    paper: DiscoveryPaper
+
+
+class DiscoveryImportResponse(BaseModel):
+    document: DocumentSummary
+    duplicate: bool = False

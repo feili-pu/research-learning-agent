@@ -1,6 +1,7 @@
 from .answerer import Answerer
+from .presenters import source_chunks
 from .rag import RagStore
-from .schemas import SourceChunk, StudyRequest, StudyResponse
+from .schemas import StudyRequest, StudyResponse
 
 
 class StudyService:
@@ -54,18 +55,7 @@ class StudyService:
             answer_mode=answer.answer_mode,
             model=answer.model,
             answer=answer.answer,
-            sources=[
-                SourceChunk(
-                    document_id=result.chunk.document_id,
-                    filename=result.chunk.filename,
-                    page=result.chunk.page,
-                    chunk_id=result.chunk.chunk_id,
-                    score=result.score,
-                    text=result.chunk.text,
-                    section=result.chunk.section,
-                )
-                for result in results
-            ],
+            sources=source_chunks(results),
         )
 
     def _build_prompt(

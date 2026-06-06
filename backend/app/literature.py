@@ -1,13 +1,13 @@
 from collections import defaultdict
 
 from .answerer import Answerer
+from .presenters import paper_metadata, source_chunks
 from .rag import RagStore, SearchResult
 from .schemas import (
     LiteratureRequest,
     LiteratureReviewResponse,
     LiteratureSearchResponse,
     PaperCandidate,
-    SourceChunk,
 )
 
 
@@ -24,7 +24,7 @@ class LiteratureService:
             query=request.query,
             retrieval_mode=self.store.active_retrieval_mode,
             papers=papers,
-            sources=self._source_chunks(filtered_results),
+            sources=source_chunks(filtered_results),
         )
 
     def review(self, request: LiteratureRequest) -> LiteratureReviewResponse:
@@ -62,6 +62,18 @@ class LiteratureService:
         )
         return self._run("detail_briefing", request, prompt)
 
+    def compare(self, request: LiteratureRequest) -> LiteratureReviewResponse:
+        prompt = self._build_prompt(
+            task="paper_compare",
+            request=request,
+            instruction=(
+                "请对检索到的代表论文做横向对比，帮助用户判断哪些论文值得优先阅读或复现。"
+                "输出应包含：对比维度表、每篇论文的核心问题、方法差异、实验/数据线索、优点、局限、适合继续研究的切入点。"
+                "如果某个维度证据不足，请写明缺少证据，不要补编。"
+            ),
+        )
+        return self._run("paper_compare", request, prompt)
+
     def _run(
         self,
         task: str,
@@ -80,7 +92,7 @@ class LiteratureService:
             model=answer.model,
             answer=answer.answer,
             papers=papers,
-            sources=self._source_chunks(filtered_results),
+            sources=source_chunks(filtered_results),
         )
 
     def _search_query(self, request: LiteratureRequest) -> str:
@@ -131,7 +143,7 @@ class LiteratureService:
                     filename=document.filename,
                     pages=document.pages,
                     chunks=document.chunks,
-                    metadata=self._paper_metadata(document),
+                    metadata=paper_metadata(document.metadata),
                     score=round(float(score), 6),
                     evidence_count=len(document_results),
                     evidence_pages=pages[:8],
@@ -150,43 +162,7 @@ class LiteratureService:
         allowed_ids = {paper.document_id for paper in papers}
         return [result for result in results if result.chunk.document_id in allowed_ids]
 
-    def _source_chunks(self, results: list[SearchResult]) -> list[SourceChunk]:
-        return [
-            SourceChunk(
-                document_id=result.chunk.document_id,
-                filename=result.chunk.filename,
-                page=result.chunk.page,
-                chunk_id=result.chunk.chunk_id,
-                score=result.score,
-                text=result.chunk.text,
-                section=result.chunk.section,
-            )
-            for result in results
-        ]
-
     def _shorten(self, text: str, max_chars: int) -> str:
         if len(text) <= max_chars:
             return text
         return text[: max_chars - 3].rstrip() + "..."
-
-    def _paper_metadata(self, document) -> dict:
-        return {
-            "title": document.metadata.title,
-            "authors": document.metadata.authors,
-            "year": document.metadata.year,
-            "venue": document.metadata.venue,
-            "doi": document.metadata.doi,
-            "abstract": document.metadata.abstract,
-            "publisher": document.metadata.publisher,
-            "external_url": document.metadata.external_url,
-            "reference_count": document.metadata.reference_count,
-            "citation_count": document.metadata.citation_count,
-            "fields_of_study": document.metadata.fields_of_study,
-            "metadata_confidence": document.metadata.metadata_confidence,
-            "metadata_match_score": document.metadata.metadata_match_score,
-            "metadata_source": document.metadata.metadata_source,
-            "is_enriched": document.metadata.is_enriched,
-            "keywords": document.metadata.keywords,
-            "duplicate_of": document.metadata.duplicate_of,
-            "duplicate_reason": document.metadata.duplicate_reason,
-        }

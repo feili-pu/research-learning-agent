@@ -93,6 +93,61 @@ export type LiteratureReviewResponse = {
   sources: SourceChunk[];
 };
 
+export type EvaluationCaseResult = {
+  name: string;
+  query: string;
+  focus: string | null;
+  section_filter: string | null;
+  expected_terms: string[];
+  matched_terms: string[];
+  missing_terms: string[];
+  score: number;
+  passed: boolean;
+  papers: PaperCandidate[];
+  sources: SourceChunk[];
+};
+
+export type LiteratureEvaluationResponse = {
+  retrieval_mode: string;
+  total_cases: number;
+  passed_cases: number;
+  average_score: number;
+  cases: EvaluationCaseResult[];
+};
+
+export type DiscoveryPaper = {
+  source: string;
+  source_id: string | null;
+  title: string;
+  authors: string | null;
+  year: number | null;
+  venue: string | null;
+  doi: string | null;
+  abstract: string | null;
+  external_url: string | null;
+  pdf_url: string | null;
+  reference_count: number | null;
+  citation_count: number | null;
+  fields_of_study: string[];
+  keywords: string[];
+  is_open_access: boolean;
+  relevance_score: number;
+  imported_document_id: string | null;
+};
+
+export type DiscoveryResponse = {
+  query: string;
+  focus: string | null;
+  sources: string[];
+  papers: DiscoveryPaper[];
+  errors: string[];
+};
+
+export type DiscoveryImportResponse = {
+  document: DocumentSummary;
+  duplicate: boolean;
+};
+
 const API_BASE = "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -144,7 +199,8 @@ export function runStudyTask(
   task: "summary" | "key-points" | "reading-plan",
   topic: string,
   focus: string,
-  topK: number
+  topK: number,
+  sectionFilter: string
 ) {
   return request<StudyResponse>(`/study/${task}`, {
     method: "POST",
@@ -152,7 +208,8 @@ export function runStudyTask(
     body: JSON.stringify({
       topic,
       focus: focus || null,
-      top_k: topK
+      top_k: topK,
+      section_filter: sectionFilter || null
     })
   });
 }
@@ -178,7 +235,7 @@ export function searchLiterature(
 }
 
 export function runLiteratureTask(
-  task: "review" | "methods" | "details",
+  task: "review" | "methods" | "details" | "compare",
   query: string,
   focus: string,
   topKDocuments: number,
@@ -195,5 +252,47 @@ export function runLiteratureTask(
       evidence_k: evidenceK,
       section_filter: sectionFilter || null
     })
+  });
+}
+
+export function runLiteratureEvaluation(
+  topKDocuments: number,
+  evidenceK: number,
+  sectionFilter: string
+) {
+  return request<LiteratureEvaluationResponse>("/evaluation/literature", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      top_k_documents: topKDocuments,
+      evidence_k: evidenceK,
+      section_filter: sectionFilter || null
+    })
+  });
+}
+
+export function searchDiscovery(
+  query: string,
+  focus: string,
+  sources: string[],
+  limitPerSource: number
+) {
+  return request<DiscoveryResponse>("/discovery/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query,
+      focus: focus || null,
+      sources,
+      limit_per_source: limitPerSource
+    })
+  });
+}
+
+export function importDiscoveredPaper(paper: DiscoveryPaper) {
+  return request<DiscoveryImportResponse>("/discovery/import-metadata", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paper })
   });
 }

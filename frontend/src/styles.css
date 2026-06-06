@@ -191,6 +191,27 @@ h2 {
   gap: 8px;
 }
 
+.source-toggles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  align-self: end;
+}
+
+.source-toggles label {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid #cbd6d8;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #34464c;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .doc-list {
   display: grid;
   gap: 8px;
@@ -356,6 +377,15 @@ h2 {
   border-radius: 6px;
 }
 
+.warning-box {
+  padding: 10px 12px;
+  border: 1px solid #decf9f;
+  background: #fffaf0;
+  color: #7b5a16;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
 .result-empty {
   min-height: 360px;
   display: grid;
@@ -444,6 +474,40 @@ h2 {
   font-size: 13px;
 }
 
+.discovery-grid {
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+
+.discovery-card {
+  min-height: 190px;
+}
+
+.paper-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.paper-actions a {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid #cbd6d8;
+  border-radius: 6px;
+  color: #245f64;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.paper-actions .secondary-button {
+  min-height: 32px;
+  padding: 0 10px;
+}
+
 .answer-meta {
   display: flex;
   flex-wrap: wrap;
@@ -464,6 +528,58 @@ h2 {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-size: 15px;
+}
+
+.evaluation-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.evaluation-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid #e0e7e8;
+  border-radius: 6px;
+  background: #fbfdfd;
+}
+
+.evaluation-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.evaluation-head span {
+  min-width: 48px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.evaluation-head .pass {
+  background: #e8f5ee;
+  color: #1f6b44;
+}
+
+.evaluation-head .warn {
+  background: #fff5df;
+  color: #805a12;
+}
+
+.evaluation-card p {
+  margin: 0;
+  color: #34464c;
+  font-size: 13px;
+}
+
+.evaluation-card span,
+.evaluation-card small {
+  color: #62727a;
+  font-size: 12px;
 }
 
 .sources-panel {
