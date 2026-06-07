@@ -633,6 +633,9 @@ def test_literature_search_ranks_papers(monkeypatch, tmp_path: Path) -> None:
     )
 
     assert response.retrieval_mode == "tfidf"
+    assert response.retrieval_trace is not None
+    assert response.retrieval_trace.search_query
+    assert response.retrieval_trace.candidate_count >= response.retrieval_trace.returned_count
     assert response.papers
     assert response.papers[0].filename == "graph-rag.pdf"
     assert response.papers[0].evidence_count >= 1
@@ -810,6 +813,54 @@ def test_literature_chinese_pest_disease_query_does_not_require_pest_only(monkey
     document_ids = [paper.document_id for paper in response.papers]
     assert disease.document_id in document_ids
     assert ripeness.document_id not in document_ids
+
+
+def test_literature_llm_query_parser_adds_exclusion_terms(monkeypatch, tmp_path: Path) -> None:
+    class IntentPlannerAnswerer:
+        client = object()
+        model = "fake-intent-model"
+
+        def complete(self, prompt: str, system: str) -> str:
+            return (
+                '{"query_rewrites":["mulberry leaf disease detection deep learning"],'
+                '"core_terms":["mulberry","leaf disease","disease"],'
+                '"task_terms":["detection","classification"],'
+                '"required_groups":[["mulberry"],["leaf disease","disease"]],'
+                '"exclude_terms":["ripeness","water quality","biometric","deep learning"]}'
+            )
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    service = LiteratureService(store=store, answerer=IntentPlannerAnswerer())
+    disease = store.add_metadata_document(
+        "mulberry-disease.metadata",
+        PaperMetadata(
+            title="Mulberry Leaf Disease Detection Using Deep Learning",
+            abstract="This paper studies mulberry leaf disease detection and classification with CNN models.",
+            keywords=["mulberry", "leaf disease", "detection"],
+            metadata_source="openalex",
+        ),
+    )
+    ripeness = store.add_metadata_document(
+        "mulberry-ripeness.metadata",
+        PaperMetadata(
+            title="Detection of Mulberry Ripeness Stages Using Deep Learning Models",
+            abstract="This paper detects mulberry fruit ripeness stages using deep learning.",
+            keywords=["mulberry", "ripeness", "detection"],
+            metadata_source="openalex",
+        ),
+    )
+
+    response = service.search(
+        LiteratureRequest(query="mulberry detection", focus="existing leaf disease literature", top_k_documents=5, evidence_k=10)
+    )
+
+    assert response.retrieval_trace is not None
+    assert response.retrieval_trace.query_planner == "llm"
+    assert "ripeness" in response.retrieval_trace.exclude_terms
+    assert "deep learning" in response.retrieval_trace.exclude_terms
+    assert [paper.document_id for paper in response.papers] == [disease.document_id]
+    assert ripeness.metadata.title in response.retrieval_trace.excluded_titles
 
 
 def test_literature_search_deduplicates_paper_candidates(monkeypatch, tmp_path: Path) -> None:

@@ -75,9 +75,26 @@ export type PaperCandidate = {
   preview: string;
 };
 
+export type LiteratureRetrievalTrace = {
+  query_planner: string;
+  planner_model: string | null;
+  planner_error: string | null;
+  search_query: string;
+  query_rewrites: string[];
+  required_groups: string[][];
+  relevance_terms: string[];
+  exclude_terms: string[];
+  reranker: string;
+  candidate_count: number;
+  gated_count: number;
+  returned_count: number;
+  excluded_titles: string[];
+};
+
 export type LiteratureSearchResponse = {
   query: string;
   retrieval_mode: string;
+  retrieval_trace: LiteratureRetrievalTrace | null;
   papers: PaperCandidate[];
   sources: SourceChunk[];
 };
@@ -89,6 +106,7 @@ export type LiteratureReviewResponse = {
   answer_mode: string;
   model: string | null;
   answer: string;
+  retrieval_trace: LiteratureRetrievalTrace | null;
   papers: PaperCandidate[];
   sources: SourceChunk[];
 };

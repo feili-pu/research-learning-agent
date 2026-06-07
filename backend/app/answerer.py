@@ -139,18 +139,21 @@ class Answerer:
         return OpenAI(api_key=self.api_key)
 
     def _call_llm(self, prompt: str) -> str:
+        return self.complete(
+            prompt,
+            system=(
+                "You are a research learning assistant. Answer using only the provided sources. "
+                "If the sources are insufficient, say what is missing. Cite sources with bracket numbers like [1]."
+            ),
+        )
+
+    def complete(self, prompt: str, system: str) -> str:
         if self.wire_api == "chat":
             response = self.client.chat.completions.create(
                 model=self.model,
                 timeout=self.timeout,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a research learning assistant. Answer using only the provided sources. "
-                            "If the sources are insufficient, say what is missing. Cite sources with bracket numbers like [1]."
-                        ),
-                    },
+                    {"role": "system", "content": system},
                     {"role": "user", "content": prompt},
                 ],
             )
@@ -162,10 +165,7 @@ class Answerer:
             input=[
                 {
                     "role": "system",
-                    "content": (
-                        "You are a research learning assistant. Answer using only the provided sources. "
-                        "If the sources are insufficient, say what is missing. Cite sources with bracket numbers like [1]."
-                    ),
+                    "content": system,
                 },
                 {"role": "user", "content": prompt},
             ],

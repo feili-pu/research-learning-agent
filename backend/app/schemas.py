@@ -101,9 +101,26 @@ class PaperCandidate(BaseModel):
     preview: str
 
 
+class LiteratureRetrievalTrace(BaseModel):
+    query_planner: str = "rules"
+    planner_model: str | None = None
+    planner_error: str | None = None
+    search_query: str
+    query_rewrites: list[str] = Field(default_factory=list)
+    required_groups: list[list[str]] = Field(default_factory=list)
+    relevance_terms: list[str] = Field(default_factory=list)
+    exclude_terms: list[str] = Field(default_factory=list)
+    reranker: str = "local_topic_metadata_rerank"
+    candidate_count: int = 0
+    gated_count: int = 0
+    returned_count: int = 0
+    excluded_titles: list[str] = Field(default_factory=list)
+
+
 class LiteratureSearchResponse(BaseModel):
     query: str
     retrieval_mode: str
+    retrieval_trace: LiteratureRetrievalTrace | None = None
     papers: list[PaperCandidate]
     sources: list[SourceChunk]
 
@@ -115,6 +132,7 @@ class LiteratureReviewResponse(BaseModel):
     answer_mode: str
     model: str | None
     answer: str
+    retrieval_trace: LiteratureRetrievalTrace | None = None
     papers: list[PaperCandidate]
     sources: list[SourceChunk]
 

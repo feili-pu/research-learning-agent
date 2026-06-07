@@ -1,5 +1,8 @@
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
+import json
+import os
 import re
 
 from .answerer import Answerer
@@ -8,6 +11,7 @@ from .rag import Document, RagStore, SearchResult
 from .schemas import (
     LiteratureRequest,
     LiteratureReviewResponse,
+    LiteratureRetrievalTrace,
     LiteratureSearchResponse,
     PaperCandidate,
 )
@@ -18,6 +22,11 @@ class QueryIntent:
     search_query: str
     required_groups: list[list[str]] = field(default_factory=list)
     relevance_terms: list[str] = field(default_factory=list)
+    exclude_terms: list[str] = field(default_factory=list)
+    query_rewrites: list[str] = field(default_factory=list)
+    planner: str = "rules"
+    planner_model: str | None = None
+    planner_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -34,10 +43,11 @@ class LiteratureService:
         self.answerer = answerer
 
     def search(self, request: LiteratureRequest) -> LiteratureSearchResponse:
-        intent, papers, filtered_results = self._retrieve(request)
+        intent, papers, filtered_results, trace = self._retrieve(request)
         return LiteratureSearchResponse(
             query=request.query,
             retrieval_mode=self.store.active_retrieval_mode,
+            retrieval_trace=trace,
             papers=papers,
             sources=source_chunks(filtered_results),
         )
@@ -99,7 +109,7 @@ class LiteratureService:
         request: LiteratureRequest,
         prompt: str,
     ) -> LiteratureReviewResponse:
-        _, papers, filtered_results = self._retrieve(request)
+        _, papers, filtered_results, trace = self._retrieve(request)
         if not papers:
             return LiteratureReviewResponse(
                 task=task,
@@ -112,6 +122,7 @@ class LiteratureService:
                     "我没有使用其他领域论文做方法迁移或类比总结。"
                     "请先通过“文献发现”导入该方向候选论文，或上传相关 PDF 后再运行。"
                 ),
+                retrieval_trace=trace,
                 papers=[],
                 sources=[],
             )
@@ -123,6 +134,7 @@ class LiteratureService:
             answer_mode=answer.answer_mode,
             model=answer.model,
             answer=answer.answer,
+            retrieval_trace=trace,
             papers=papers,
             sources=source_chunks(filtered_results),
         )
@@ -130,7 +142,7 @@ class LiteratureService:
     def _retrieve(
         self,
         request: LiteratureRequest,
-    ) -> tuple[QueryIntent, list[PaperCandidate], list[SearchResult]]:
+    ) -> tuple[QueryIntent, list[PaperCandidate], list[SearchResult], LiteratureRetrievalTrace]:
         intent = self._query_intent(request)
         chunk_results = self.store.search(
             intent.search_query,
@@ -138,13 +150,13 @@ class LiteratureService:
             request.section_filter,
             allow_semantic=False,
         )
-        candidates = self._recall_document_candidates(chunk_results, intent, request)
-        candidates = [
+        recalled_candidates = self._recall_document_candidates(chunk_results, intent, request)
+        gated_candidates = [
             candidate
-            for candidate in candidates
+            for candidate in recalled_candidates
             if self._document_matches_topic(candidate.document.document_id, candidate.results, intent)
         ]
-        candidates = self._dedupe_document_candidates(candidates)
+        candidates = self._dedupe_document_candidates(gated_candidates)
         candidates = candidates[: request.top_k_documents]
         evidence_by_document = self._extract_evidence(candidates, intent, request)
         papers = [
@@ -154,7 +166,22 @@ class LiteratureService:
         filtered_results = []
         for paper in papers:
             filtered_results.extend(evidence_by_document.get(paper.document_id, []))
-        return intent, papers, filtered_results[: request.evidence_k]
+        excluded_titles = self._excluded_candidate_titles(recalled_candidates, gated_candidates)
+        trace = LiteratureRetrievalTrace(
+            query_planner=intent.planner,
+            planner_model=intent.planner_model,
+            planner_error=intent.planner_error,
+            search_query=intent.search_query,
+            query_rewrites=intent.query_rewrites,
+            required_groups=intent.required_groups,
+            relevance_terms=intent.relevance_terms,
+            exclude_terms=intent.exclude_terms,
+            candidate_count=len(recalled_candidates),
+            gated_count=len(gated_candidates),
+            returned_count=len(papers),
+            excluded_titles=excluded_titles[:8],
+        )
+        return intent, papers, filtered_results[: request.evidence_k], trace
 
     def _candidate_evidence_k(self, request: LiteratureRequest) -> int:
         return min(max(request.evidence_k * 4, request.evidence_k), 80)
@@ -165,6 +192,13 @@ class LiteratureService:
         return f"{request.query}\n关注重点：{request.focus}"
 
     def _query_intent(self, request: LiteratureRequest) -> QueryIntent:
+        rule_intent = self._rule_query_intent(request)
+        llm_intent = self._llm_query_intent(request, rule_intent)
+        if llm_intent is None:
+            return rule_intent
+        return llm_intent
+
+    def _rule_query_intent(self, request: LiteratureRequest) -> QueryIntent:
         raw_query = self._search_query(request)
         required_groups: list[list[str]] = []
         relevance_terms = self._topic_tokens(raw_query)
@@ -215,11 +249,136 @@ class LiteratureService:
 
         relevance_terms = self._unique_terms(relevance_terms)
         search_terms = relevance_terms + self._topic_tokens(request.focus or "")
+        search_query = " ".join(self._unique_terms(search_terms)) or raw_query
         return QueryIntent(
-            search_query=" ".join(self._unique_terms(search_terms)) or raw_query,
+            search_query=search_query,
             required_groups=self._dedupe_groups(required_groups),
             relevance_terms=relevance_terms,
+            query_rewrites=[search_query],
+            planner="rules",
         )
+
+    def _llm_query_intent(
+        self,
+        request: LiteratureRequest,
+        fallback: QueryIntent,
+    ) -> QueryIntent | None:
+        if getattr(self.answerer, "client", None) is None:
+            return None
+
+        executor = ThreadPoolExecutor(max_workers=1)
+        try:
+            future = executor.submit(self._call_query_intent_llm, request, fallback)
+            payload = future.result(timeout=self._query_planner_timeout())
+        except FuturesTimeoutError:
+            return QueryIntent(
+                search_query=fallback.search_query,
+                required_groups=fallback.required_groups,
+                relevance_terms=fallback.relevance_terms,
+                exclude_terms=fallback.exclude_terms,
+                query_rewrites=fallback.query_rewrites,
+                planner="rules",
+                planner_model=getattr(self.answerer, "model", None),
+                planner_error="LLM query parsing timed out; fell back to rules.",
+            )
+        except Exception as exc:
+            return QueryIntent(
+                search_query=fallback.search_query,
+                required_groups=fallback.required_groups,
+                relevance_terms=fallback.relevance_terms,
+                exclude_terms=fallback.exclude_terms,
+                query_rewrites=fallback.query_rewrites,
+                planner="rules",
+                planner_model=getattr(self.answerer, "model", None),
+                planner_error=f"LLM query parsing failed: {type(exc).__name__}",
+            )
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+        query_rewrites = self._unique_terms(
+            [str(item) for item in payload.get("query_rewrites", [])]
+        )[:4]
+        relevance_terms = self._unique_terms(
+            [
+                *fallback.relevance_terms,
+                *[str(item) for item in payload.get("core_terms", [])],
+                *[str(item) for item in payload.get("task_terms", [])],
+                *self._topic_tokens(" ".join(query_rewrites)),
+            ]
+        )[:24]
+        required_groups = [
+            *fallback.required_groups,
+            *self._normalize_groups(payload.get("required_groups", [])),
+        ]
+        exclude_terms = self._unique_terms(
+            [str(item) for item in payload.get("exclude_terms", [])]
+        )[:16]
+        search_query = " ".join(self._unique_terms([*query_rewrites, *relevance_terms])) or fallback.search_query
+        return QueryIntent(
+            search_query=search_query,
+            required_groups=self._dedupe_groups(required_groups),
+            relevance_terms=relevance_terms or fallback.relevance_terms,
+            exclude_terms=exclude_terms,
+            query_rewrites=query_rewrites or fallback.query_rewrites,
+            planner="llm",
+            planner_model=getattr(self.answerer, "model", None),
+        )
+
+    def _call_query_intent_llm(
+        self,
+        request: LiteratureRequest,
+        fallback: QueryIntent,
+    ) -> dict:
+        prompt = (
+            "你是文献检索查询解析器。请把用户研究方向解析成严格 JSON，不要输出 Markdown。\n"
+            "目标是只检索已有文献，不做跨领域方法迁移。\n"
+            "JSON 字段：\n"
+            "- query_rewrites: 2-4 个中英混合检索式，优先英文论文检索表达\n"
+            "- core_terms: 6-12 个核心主题词或同义词\n"
+            "- task_terms: 2-8 个任务/方法词\n"
+            "- required_groups: 数组的数组；每个子数组是一组同义必需主题，论文至少要命中每组之一\n"
+            "- exclude_terms: 与该方向容易混淆但应排除的主题词\n\n"
+            f"研究方向：{request.query}\n"
+            f"关注重点：{request.focus or ''}\n"
+            f"规则解析检索式：{fallback.search_query}\n"
+            f"规则必需组：{fallback.required_groups}\n"
+        )
+        output = self.answerer.complete(
+            prompt,
+            system=(
+                "You are a strict literature retrieval query parser. "
+                "Return one valid JSON object only. Do not answer the research question."
+            ),
+        )
+        return self._parse_json_object(output)
+
+    def _query_planner_timeout(self) -> float:
+        return float(os.getenv("RLA_QUERY_PLANNER_TIMEOUT", "45"))
+
+    def _parse_json_object(self, value: str) -> dict:
+        text = value.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?", "", text, flags=re.IGNORECASE).strip()
+            text = re.sub(r"```$", "", text).strip()
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end >= start:
+            text = text[start : end + 1]
+        payload = json.loads(text)
+        return payload if isinstance(payload, dict) else {}
+
+    def _normalize_groups(self, value) -> list[list[str]]:
+        groups: list[list[str]] = []
+        if not isinstance(value, list):
+            return groups
+        for item in value:
+            if isinstance(item, list):
+                group = self._unique_terms([str(term) for term in item])
+            else:
+                group = self._unique_terms([str(item)])
+            if group:
+                groups.append(group)
+        return groups
 
     def _dedupe_groups(self, groups: list[list[str]]) -> list[list[str]]:
         deduped = []
@@ -336,7 +495,9 @@ class LiteratureService:
             for group in intent.required_groups
             if any(term in metadata_text for term in group)
         )
+        exclude_hits = sum(1 for term in intent.exclude_terms if term in metadata_text)
         score = chunk_score + topic_score * 0.35 + metadata_hits * 0.25 + group_hits * 0.6
+        score -= exclude_hits * 1.2
         if document.metadata.duplicate_of:
             score *= 0.85
         return float(score)
@@ -439,6 +600,7 @@ class LiteratureService:
         intent: QueryIntent,
     ) -> bool:
         text = self._document_topic_text(document_id, results)
+        has_excluded_topic = intent.exclude_terms and any(term in text for term in intent.exclude_terms)
         if intent.required_groups:
             core_groups = [group for group in intent.required_groups if not self._is_generic_task_group(group)]
             if core_groups:
@@ -446,8 +608,12 @@ class LiteratureService:
                 if mulberry_groups:
                     return all(any(term in text for term in group) for group in core_groups)
                 return all(any(term in text for term in group) for group in core_groups)
+            if has_excluded_topic:
+                return False
             matched_groups = sum(1 for group in intent.required_groups if any(term in text for term in group))
             return matched_groups >= max(1, min(2, len(intent.required_groups)))
+        if has_excluded_topic:
+            return False
         return self._document_topic_score(document_id, results, intent) >= 2
 
     def _is_generic_task_group(self, group: list[str]) -> bool:
@@ -470,6 +636,7 @@ class LiteratureService:
         text = self._document_topic_text(document_id, results)
         score = sum(1 for term in intent.relevance_terms if term in text)
         score += sum(1 for group in intent.required_groups if any(term in text for term in group))
+        score -= sum(1 for term in intent.exclude_terms if term in text)
         return score
 
     def _document_topic_text(self, document_id: str, results: list[SearchResult]) -> str:
@@ -536,6 +703,21 @@ class LiteratureService:
 
     def _normalize_topic_text(self, value: str) -> str:
         return " ".join(re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]{2,}", value.lower()))
+
+    def _excluded_candidate_titles(
+        self,
+        recalled_candidates: list[DocumentCandidate],
+        gated_candidates: list[DocumentCandidate],
+    ) -> list[str]:
+        gated_ids = {candidate.document.document_id for candidate in gated_candidates}
+        titles = []
+        for candidate in recalled_candidates:
+            if candidate.document.document_id in gated_ids:
+                continue
+            title = candidate.document.metadata.title or candidate.document.filename
+            if title not in titles:
+                titles.append(title)
+        return titles
 
     def _shorten(self, text: str, max_chars: int) -> str:
         if len(text) <= max_chars:

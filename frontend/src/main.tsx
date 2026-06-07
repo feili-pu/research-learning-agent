@@ -28,6 +28,7 @@ import {
   getDocuments,
   importDiscoveredPaper,
   LiteratureReviewResponse,
+  LiteratureRetrievalTrace,
   LiteratureSearchResponse,
   LiteratureEvaluationResponse,
   PaperCandidate,
@@ -670,10 +671,12 @@ function ResultView({
   }
 
   const papers = "papers" in result ? result.papers : [];
+  const trace = "retrieval_trace" in result ? result.retrieval_trace : null;
   const hasAnswer = "answer" in result;
 
   return (
     <section className="result-stack">
+      {trace && <RetrievalTraceView trace={trace} />}
       {papers.length > 0 && <PaperList papers={papers} />}
       <div className="result-layout">
         <article className="answer-panel">
@@ -695,6 +698,73 @@ function ResultView({
         </aside>
       </div>
     </section>
+  );
+}
+
+function RetrievalTraceView({ trace }: { trace: LiteratureRetrievalTrace }) {
+  const requiredGroups = trace.required_groups
+    .map((group) => group.join(" / "))
+    .filter(Boolean);
+  return (
+    <article className="paper-panel retrieval-trace">
+      <div className="panel-heading">
+        <h2>检索链路</h2>
+        <span className="subtle-count">
+          {trace.query_planner === "llm" ? "LLM 查询解析" : "规则查询解析"} · {trace.reranker}
+        </span>
+      </div>
+      {trace.planner_error && <div className="warning-box">{trace.planner_error}</div>}
+      <div className="trace-stats">
+        <span>候选 {trace.candidate_count}</span>
+        <span>门控后 {trace.gated_count}</span>
+        <span>返回 {trace.returned_count}</span>
+        {trace.planner_model && <span>{trace.planner_model}</span>}
+      </div>
+      <div className="query-plan">
+        <strong>实际检索式</strong>
+        <div>
+          <span>{trace.search_query}</span>
+        </div>
+      </div>
+      {trace.query_rewrites.length > 0 && (
+        <div className="query-plan">
+          <strong>查询改写</strong>
+          <div>
+            {trace.query_rewrites.map((query) => (
+              <span key={query}>{query}</span>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="trace-columns">
+        <div className="query-plan">
+          <strong>必需主题组</strong>
+          <div>
+            {(requiredGroups.length ? requiredGroups : ["none"]).map((group) => (
+              <span key={group}>{group}</span>
+            ))}
+          </div>
+        </div>
+        <div className="query-plan">
+          <strong>排除主题</strong>
+          <div>
+            {(trace.exclude_terms.length ? trace.exclude_terms : ["none"]).map((term) => (
+              <span key={term}>{term}</span>
+            ))}
+          </div>
+        </div>
+      </div>
+      {trace.excluded_titles.length > 0 && (
+        <div className="query-plan">
+          <strong>门控排除</strong>
+          <div>
+            {trace.excluded_titles.map((title) => (
+              <span key={title}>{title}</span>
+            ))}
+          </div>
+        </div>
+      )}
+    </article>
   );
 }
 

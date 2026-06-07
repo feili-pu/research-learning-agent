@@ -483,6 +483,34 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+.retrieval-trace {
+  gap: 10px;
+}
+
+.trace-stats,
+.trace-columns {
+  display: grid;
+  gap: 8px;
+}
+
+.trace-stats {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.trace-stats span {
+  padding: 8px 10px;
+  border: 1px solid #d9e3e4;
+  border-radius: 6px;
+  background: #fbfdfd;
+  color: #31575c;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.trace-columns {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .paper-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -684,6 +712,7 @@ h2 {
 @media (max-width: 980px) {
   .workspace,
   .result-layout,
+  .trace-columns,
   .input-grid,
   .input-grid.research-grid {
     grid-template-columns: 1fr;
