@@ -133,6 +133,16 @@ class EvaluationCaseResult(BaseModel):
     expected_terms: list[str]
     matched_terms: list[str]
     missing_terms: list[str]
+    forbidden_terms: list[str] = Field(default_factory=list)
+    forbidden_hits: list[str] = Field(default_factory=list)
+    expected_titles: list[str] = Field(default_factory=list)
+    matched_titles: list[str] = Field(default_factory=list)
+    missing_titles: list[str] = Field(default_factory=list)
+    forbidden_titles: list[str] = Field(default_factory=list)
+    forbidden_title_hits: list[str] = Field(default_factory=list)
+    precision: float = 0.0
+    recall: float = 0.0
+    noise: float = 0.0
     score: float
     passed: bool
     papers: list[PaperCandidate]

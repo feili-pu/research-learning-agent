@@ -16,6 +16,11 @@ class EvaluationCase:
     focus: str | None
     expected_terms: tuple[str, ...]
     section_filter: str | None = None
+    forbidden_terms: tuple[str, ...] = ()
+    expected_titles: tuple[str, ...] = ()
+    forbidden_titles: tuple[str, ...] = ()
+    min_recall: float = 0.6
+    max_noise: float = 0.0
 
 
 DEFAULT_CASES = [
@@ -25,6 +30,7 @@ DEFAULT_CASES = [
         focus="models, methods, and experiments",
         expected_terms=("water", "quality", "model"),
         section_filter="methods",
+        forbidden_terms=("biometric", "mulberry", "recommendation"),
     ),
     EvaluationCase(
         name="biometric_security",
@@ -32,6 +38,7 @@ DEFAULT_CASES = [
         focus="methods and security limitations",
         expected_terms=("biometric", "security", "template"),
         section_filter=None,
+        forbidden_terms=("water quality", "mulberry", "recommender"),
     ),
     EvaluationCase(
         name="remote_sensing_water_quality",
@@ -39,6 +46,17 @@ DEFAULT_CASES = [
         focus="data sources and retrieval methods",
         expected_terms=("remote", "sensing", "water"),
         section_filter=None,
+        forbidden_terms=("biometric", "mulberry", "recommendation"),
+    ),
+    EvaluationCase(
+        name="mulberry_leaf_disease_detection",
+        query="mulberry leaf disease detection",
+        focus="deep learning methods and experiments",
+        expected_terms=("mulberry", "leaf", "disease"),
+        expected_titles=("mulberry leaf disease",),
+        forbidden_terms=("water quality", "biometric", "template protection", "recommendation"),
+        forbidden_titles=("Water Quality", "Biometric", "Template Protection", "Recommender"),
+        min_recall=0.6,
     ),
 ]
 
@@ -80,13 +98,31 @@ class EvaluationService:
             )
         )
         evidence_text = self._join_evidence(search_response)
+        title_text = self._join_titles(search_response)
         matched_terms = [
-            term for term in case.expected_terms if term.lower() in evidence_text
+            term for term in case.expected_terms if self._matches(term, evidence_text)
         ]
         missing_terms = [
-            term for term in case.expected_terms if term.lower() not in evidence_text
+            term for term in case.expected_terms if not self._matches(term, evidence_text)
         ]
-        score = len(matched_terms) / len(case.expected_terms) if case.expected_terms else 0.0
+        forbidden_hits = [
+            term for term in case.forbidden_terms if self._matches(term, evidence_text)
+        ]
+        matched_titles = [
+            title for title in case.expected_titles if self._matches(title, title_text)
+        ]
+        missing_titles = [
+            title for title in case.expected_titles if not self._matches(title, title_text)
+        ]
+        forbidden_title_hits = [
+            title for title in case.forbidden_titles if self._matches(title, title_text)
+        ]
+        recall = len(matched_terms) / len(case.expected_terms) if case.expected_terms else 1.0
+        title_recall = len(matched_titles) / len(case.expected_titles) if case.expected_titles else recall
+        noise_denominator = max(len(case.forbidden_terms) + len(case.forbidden_titles), 1)
+        noise = (len(forbidden_hits) + len(forbidden_title_hits)) / noise_denominator
+        precision = 1.0 - noise
+        score = max(0.0, ((recall + title_recall + precision) / 3) - noise * 0.35)
         return EvaluationCaseResult(
             name=case.name,
             query=case.query,
@@ -95,8 +131,18 @@ class EvaluationService:
             expected_terms=list(case.expected_terms),
             matched_terms=matched_terms,
             missing_terms=missing_terms,
+            forbidden_terms=list(case.forbidden_terms),
+            forbidden_hits=forbidden_hits,
+            expected_titles=list(case.expected_titles),
+            matched_titles=matched_titles,
+            missing_titles=missing_titles,
+            forbidden_titles=list(case.forbidden_titles),
+            forbidden_title_hits=forbidden_title_hits,
+            precision=round(precision, 4),
+            recall=round(recall, 4),
+            noise=round(noise, 4),
             score=round(score, 4),
-            passed=score >= 0.6,
+            passed=recall >= case.min_recall and noise <= case.max_noise and not missing_titles,
             papers=search_response.papers,
             sources=search_response.sources,
         )
@@ -118,3 +164,12 @@ class EvaluationService:
             )
         parts.extend(source.text for source in search_response.sources)
         return " ".join(parts).lower()
+
+    def _join_titles(self, search_response) -> str:
+        return " ".join(
+            paper.metadata.title or paper.filename
+            for paper in search_response.papers
+        ).lower()
+
+    def _matches(self, needle: str, text: str) -> bool:
+        return needle.lower() in text

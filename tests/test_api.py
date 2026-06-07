@@ -8,11 +8,11 @@ from backend.app.answerer import Answerer
 from backend.app import main
 from backend.app.crossref import CrossrefWork
 from backend.app.discovery import DiscoveryService, ProviderResult
-from backend.app.evaluation import EvaluationService
+from backend.app.evaluation import EvaluationCase, EvaluationService
 from backend.app.literature import LiteratureService
 from backend.app.rag import Chunk, PaperMetadata, RagStore
 from backend.app.semantic_scholar import SemanticScholarClient, SemanticScholarWork
-from backend.app.schemas import LiteratureRequest, StudyRequest
+from backend.app.schemas import LiteratureEvaluationRequest, LiteratureRequest, StudyRequest
 from backend.app.study import StudyService
 
 
@@ -158,6 +158,7 @@ def test_answerer_falls_back_when_llm_fails(monkeypatch, tmp_path: Path) -> None
         responses = BrokenResponses()
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("RLA_OPENAI_WIRE_API", "responses")
     store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
     pdf_bytes = make_pdf_with_text("The answer must stay grounded in retrieved chunks.")
     store.ingest_pdf("fallback.pdf", pdf_bytes)
@@ -794,6 +795,15 @@ def test_literature_evaluation_endpoint(monkeypatch, tmp_path: Path) -> None:
             "Abstract biometric security. Template protection methods discuss biometric template security limitations."
         ),
     )
+    main.store.add_metadata_document(
+        "mulberry.metadata",
+        PaperMetadata(
+            title="Mulberry Leaf Disease Detection Using Deep Learning",
+            abstract="This paper studies mulberry leaf disease detection and classification with CNN models.",
+            keywords=["mulberry", "leaf disease", "detection"],
+            metadata_source="openalex",
+        ),
+    )
 
     response = client.post(
         "/evaluation/literature",
@@ -802,10 +812,68 @@ def test_literature_evaluation_endpoint(monkeypatch, tmp_path: Path) -> None:
 
     assert response.status_code == 200
     data = response.json()
-    assert data["total_cases"] == 3
+    assert data["total_cases"] == 4
     assert "average_score" in data
     assert data["cases"]
     assert {"name", "matched_terms", "missing_terms", "score", "passed"} <= set(data["cases"][0])
+    assert {
+        "forbidden_hits",
+        "forbidden_title_hits",
+        "expected_titles",
+        "matched_titles",
+        "missing_titles",
+        "precision",
+        "recall",
+        "noise",
+    } <= set(data["cases"][0])
+
+
+def test_literature_evaluation_flags_relevance_pollution(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    service = LiteratureService(store=store, answerer=Answerer())
+    evaluator = EvaluationService(literature_service=service)
+    store.add_metadata_document(
+        "mulberry.metadata",
+        PaperMetadata(
+            title="Mulberry Leaf Disease Detection Using Deep Learning",
+            abstract="This paper studies mulberry leaf disease detection and classification with CNN models.",
+            keywords=["mulberry", "leaf disease", "detection"],
+            metadata_source="openalex",
+        ),
+    )
+    store.add_metadata_document(
+        "biometric.metadata",
+        PaperMetadata(
+            title="Biometric Liveness Detection Using Convolutional Networks",
+            abstract="This paper studies biometric detection and recognition with CNN models.",
+            keywords=["biometric", "detection", "cnn"],
+            metadata_source="openalex",
+        ),
+    )
+
+    result = evaluator.evaluate_literature(
+        LiteratureEvaluationRequest(top_k_documents=5, evidence_k=10),
+        cases=[
+            EvaluationCase(
+                name="mulberry_topic_gate",
+                query="mulberry leaf disease detection",
+                focus="deep learning methods",
+                expected_terms=("mulberry", "leaf", "disease"),
+                forbidden_terms=("biometric",),
+                expected_titles=("mulberry leaf disease",),
+                forbidden_titles=("Biometric",),
+            )
+        ],
+    )
+
+    case = result.cases[0]
+    assert case.passed
+    assert case.noise == 0.0
+    assert case.recall == 1.0
+    assert case.forbidden_hits == []
+    assert case.forbidden_title_hits == []
+    assert case.matched_titles == ["mulberry leaf disease"]
 
 
 class FakeDiscoveryPlannerResponse:

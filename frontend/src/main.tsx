@@ -785,8 +785,21 @@ function EvaluationView({ result }: { result: LiteratureEvaluationResponse }) {
               </div>
               <p>{item.query}</p>
               <small>{item.focus || "no focus"} · {item.section_filter || "all sections"}</small>
+              <span>
+                召回：{item.recall.toFixed(2)} · 精度：{item.precision.toFixed(2)} · 噪声：{item.noise.toFixed(2)}
+              </span>
               <span>命中：{item.matched_terms.length ? item.matched_terms.join(", ") : "none"}</span>
               <span>缺失：{item.missing_terms.length ? item.missing_terms.join(", ") : "none"}</span>
+              {item.expected_titles.length > 0 && (
+                <span>标题命中：{item.matched_titles.length ? item.matched_titles.join(", ") : "none"}</span>
+              )}
+              {item.missing_titles.length > 0 && <span>标题缺失：{item.missing_titles.join(", ")}</span>}
+              <span>
+                污染：
+                {[...item.forbidden_hits, ...item.forbidden_title_hits].length
+                  ? [...item.forbidden_hits, ...item.forbidden_title_hits].join(", ")
+                  : "none"}
+              </span>
               <span>论文：{item.papers.length} · 证据：{item.sources.length}</span>
             </article>
           ))}

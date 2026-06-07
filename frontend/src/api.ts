@@ -101,6 +101,16 @@ export type EvaluationCaseResult = {
   expected_terms: string[];
   matched_terms: string[];
   missing_terms: string[];
+  forbidden_terms: string[];
+  forbidden_hits: string[];
+  expected_titles: string[];
+  matched_titles: string[];
+  missing_titles: string[];
+  forbidden_titles: string[];
+  forbidden_title_hits: string[];
+  precision: number;
+  recall: number;
+  noise: number;
   score: number;
   passed: boolean;
   papers: PaperCandidate[];
