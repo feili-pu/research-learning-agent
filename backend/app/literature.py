@@ -4,7 +4,7 @@ import re
 
 from .answerer import Answerer
 from .presenters import paper_metadata, source_chunks
-from .rag import RagStore, SearchResult
+from .rag import Document, RagStore, SearchResult
 from .schemas import (
     LiteratureRequest,
     LiteratureReviewResponse,
@@ -20,22 +20,21 @@ class QueryIntent:
     relevance_terms: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class DocumentCandidate:
+    document: Document
+    results: list[SearchResult]
+    score: float
+    topic_score: int
+
+
 class LiteratureService:
     def __init__(self, store: RagStore, answerer: Answerer) -> None:
         self.store = store
         self.answerer = answerer
 
     def search(self, request: LiteratureRequest) -> LiteratureSearchResponse:
-        intent = self._query_intent(request)
-        results = self.store.search(
-            intent.search_query,
-            self._candidate_evidence_k(request),
-            request.section_filter,
-            allow_semantic=False,
-        )
-        results = self._filter_results_by_topic(results, intent)
-        papers = self._rank_papers(results, request.top_k_documents, intent)
-        filtered_results = self._filter_results_to_papers(results, papers)
+        intent, papers, filtered_results = self._retrieve(request)
         return LiteratureSearchResponse(
             query=request.query,
             retrieval_mode=self.store.active_retrieval_mode,
@@ -100,17 +99,7 @@ class LiteratureService:
         request: LiteratureRequest,
         prompt: str,
     ) -> LiteratureReviewResponse:
-        intent = self._query_intent(request)
-        results = self.store.search(
-            intent.search_query,
-            self._candidate_evidence_k(request),
-            request.section_filter,
-            allow_semantic=False,
-        )
-        results = self._filter_results_by_topic(results, intent)
-        papers = self._rank_papers(results, request.top_k_documents, intent)
-        filtered_results = self._filter_results_to_papers(results, papers)
-        filtered_results = filtered_results[: request.evidence_k]
+        _, papers, filtered_results = self._retrieve(request)
         if not papers:
             return LiteratureReviewResponse(
                 task=task,
@@ -137,6 +126,35 @@ class LiteratureService:
             papers=papers,
             sources=source_chunks(filtered_results),
         )
+
+    def _retrieve(
+        self,
+        request: LiteratureRequest,
+    ) -> tuple[QueryIntent, list[PaperCandidate], list[SearchResult]]:
+        intent = self._query_intent(request)
+        chunk_results = self.store.search(
+            intent.search_query,
+            self._candidate_evidence_k(request),
+            request.section_filter,
+            allow_semantic=False,
+        )
+        candidates = self._recall_document_candidates(chunk_results, intent, request)
+        candidates = [
+            candidate
+            for candidate in candidates
+            if self._document_matches_topic(candidate.document.document_id, candidate.results, intent)
+        ]
+        candidates = self._dedupe_document_candidates(candidates)
+        candidates = candidates[: request.top_k_documents]
+        evidence_by_document = self._extract_evidence(candidates, intent, request)
+        papers = [
+            self._paper_candidate(candidate, evidence_by_document.get(candidate.document.document_id, []))
+            for candidate in candidates
+        ]
+        filtered_results = []
+        for paper in papers:
+            filtered_results.extend(evidence_by_document.get(paper.document_id, []))
+        return intent, papers, filtered_results[: request.evidence_k]
 
     def _candidate_evidence_k(self, request: LiteratureRequest) -> int:
         return min(max(request.evidence_k * 4, request.evidence_k), 80)
@@ -172,6 +190,8 @@ class LiteratureService:
         }
 
         for phrase, expansions in expansion_map.items():
+            if "病虫害" in raw_query and phrase in {"病害", "虫害"}:
+                continue
             if phrase in raw_query:
                 group = self._unique_terms(expansions)
                 required_groups.append(group)
@@ -229,62 +249,188 @@ class LiteratureService:
             "如果来源不足，只能说明本地已有文献不足，不能提出跨领域迁移方案来填补。"
         )
 
-    def _rank_papers(
+    def _recall_document_candidates(
         self,
-        results: list[SearchResult],
-        top_k_documents: int,
+        chunk_results: list[SearchResult],
         intent: QueryIntent,
-    ) -> list[PaperCandidate]:
+        request: LiteratureRequest,
+    ) -> list[DocumentCandidate]:
         grouped: dict[str, list[SearchResult]] = defaultdict(list)
-        for result in results:
+        for result in chunk_results:
             grouped[result.chunk.document_id].append(result)
 
         candidates = []
-        for document_id, document_results in grouped.items():
-            document = self.store.documents.get(document_id)
-            if document is None:
+        recall_limit = max(request.top_k_documents * 4, 20)
+        for document in self.store.documents.values():
+            document_results = grouped.get(document.document_id, [])
+            score = self._document_recall_score(document.document_id, document_results, intent)
+            if score <= 0:
                 continue
-
-            sorted_results = sorted(document_results, key=lambda item: item.score, reverse=True)
-            topic_score = self._document_topic_score(document_id, document_results, intent)
-            score = sum(item.score for item in sorted_results[:3]) + topic_score * 0.25
-            pages = sorted({item.chunk.page for item in sorted_results})
-            sections = sorted({item.chunk.section for item in sorted_results if item.chunk.section})
-            preview = self._shorten(sorted_results[0].chunk.text, max_chars=260)
             candidates.append(
-                PaperCandidate(
-                    document_id=document.document_id,
-                    filename=document.filename,
-                    pages=document.pages,
-                    chunks=document.chunks,
-                    metadata=paper_metadata(document.metadata),
-                    score=round(float(score), 6),
-                    evidence_count=len(document_results),
-                    evidence_pages=pages[:8],
-                    evidence_sections=sections[:8],
-                    preview=preview,
+                DocumentCandidate(
+                    document=document,
+                    results=document_results,
+                    score=score,
+                    topic_score=self._document_topic_score(document.document_id, document_results, intent),
                 )
             )
 
-        return sorted(candidates, key=lambda item: item.score, reverse=True)[:top_k_documents]
+        return sorted(candidates, key=lambda item: item.score, reverse=True)[:recall_limit]
 
-    def _filter_results_by_topic(
+    def _dedupe_document_candidates(
         self,
+        candidates: list[DocumentCandidate],
+    ) -> list[DocumentCandidate]:
+        by_key: dict[str, DocumentCandidate] = {}
+        for candidate in candidates:
+            key = self._document_identity_key(candidate.document)
+            existing = by_key.get(key)
+            if existing is None or self._prefer_candidate(candidate, existing):
+                by_key[key] = candidate
+        return sorted(by_key.values(), key=lambda item: item.score, reverse=True)
+
+    def _document_identity_key(self, document: Document) -> str:
+        doi = document.metadata.doi.strip().lower() if document.metadata.doi else ""
+        if doi:
+            return f"doi:{doi}"
+        title = self._normalize_topic_text(document.metadata.title or "")
+        if title:
+            return f"title:{title}"
+        return f"filename:{document.filename.lower()}"
+
+    def _prefer_candidate(self, candidate: DocumentCandidate, existing: DocumentCandidate) -> bool:
+        candidate_is_duplicate = bool(candidate.document.metadata.duplicate_of)
+        existing_is_duplicate = bool(existing.document.metadata.duplicate_of)
+        if candidate_is_duplicate != existing_is_duplicate:
+            return not candidate_is_duplicate
+        return candidate.score > existing.score
+
+    def _document_recall_score(
+        self,
+        document_id: str,
         results: list[SearchResult],
         intent: QueryIntent,
-    ) -> list[SearchResult]:
-        if not intent.required_groups and not intent.relevance_terms:
-            return results
-        grouped: dict[str, list[SearchResult]] = defaultdict(list)
-        for result in results:
-            grouped[result.chunk.document_id].append(result)
+    ) -> float:
+        document = self.store.documents.get(document_id)
+        if document is None:
+            return 0.0
 
-        allowed_ids = {
-            document_id
-            for document_id, document_results in grouped.items()
-            if self._document_matches_topic(document_id, document_results, intent)
+        sorted_results = sorted(results, key=lambda item: item.score, reverse=True)
+        chunk_score = sum(item.score for item in sorted_results[:5])
+        topic_score = self._document_topic_score(document_id, results, intent)
+        metadata_text = self._normalize_topic_text(
+            " ".join(
+                item
+                for item in [
+                    document.metadata.title,
+                    document.metadata.abstract,
+                    " ".join(document.metadata.keywords),
+                    " ".join(document.metadata.fields_of_study),
+                ]
+                if item
+            )
+        )
+        metadata_hits = sum(1 for term in intent.relevance_terms if term in metadata_text)
+        group_hits = sum(
+            1
+            for group in intent.required_groups
+            if any(term in metadata_text for term in group)
+        )
+        score = chunk_score + topic_score * 0.35 + metadata_hits * 0.25 + group_hits * 0.6
+        if document.metadata.duplicate_of:
+            score *= 0.85
+        return float(score)
+
+    def _extract_evidence(
+        self,
+        candidates: list[DocumentCandidate],
+        intent: QueryIntent,
+        request: LiteratureRequest,
+    ) -> dict[str, list[SearchResult]]:
+        if not candidates:
+            return {}
+
+        per_document_limit = max(1, min(request.evidence_k, request.evidence_k // len(candidates) or 1))
+        scored_by_document: dict[str, list[SearchResult]] = {}
+        pool: list[SearchResult] = []
+        for candidate in candidates:
+            document_id = candidate.document.document_id
+            existing_scores = {result.chunk.chunk_id: result.score for result in candidate.results}
+            chunks = self._document_chunks(document_id, request.section_filter)
+            if not chunks and request.section_filter:
+                chunks = self._document_chunks(document_id, None)
+
+            scored_results = []
+            for chunk in chunks:
+                local_score = self._chunk_relevance_score(chunk.text, intent)
+                score = existing_scores.get(chunk.chunk_id, 0.0) + local_score * 0.08 + candidate.topic_score * 0.01
+                if score > 0:
+                    scored_results.append(SearchResult(chunk=chunk, score=float(score)))
+
+            if not scored_results and chunks:
+                scored_results.append(SearchResult(chunk=chunks[0], score=0.01))
+
+            scored_results = sorted(scored_results, key=lambda item: item.score, reverse=True)
+            scored_by_document[document_id] = scored_results[:per_document_limit]
+            pool.extend(scored_results[per_document_limit:])
+
+        selected_chunk_ids = {
+            result.chunk.chunk_id
+            for results in scored_by_document.values()
+            for result in results
         }
-        return [result for result in results if result.chunk.document_id in allowed_ids]
+        total_selected = sum(len(results) for results in scored_by_document.values())
+        for result in sorted(pool, key=lambda item: item.score, reverse=True):
+            if total_selected >= request.evidence_k:
+                break
+            if result.chunk.chunk_id in selected_chunk_ids:
+                continue
+            scored_by_document[result.chunk.document_id].append(result)
+            selected_chunk_ids.add(result.chunk.chunk_id)
+            total_selected += 1
+
+        return scored_by_document
+
+    def _document_chunks(self, document_id: str, section_filter: str | None) -> list:
+        section = section_filter.strip().lower() if section_filter else None
+        chunks = [chunk for chunk in self.store.chunks if chunk.document_id == document_id]
+        if not section:
+            return chunks
+        return [chunk for chunk in chunks if chunk.section == section]
+
+    def _chunk_relevance_score(self, text: str, intent: QueryIntent) -> int:
+        normalized = self._normalize_topic_text(text)
+        score = sum(1 for term in intent.relevance_terms if term in normalized)
+        score += sum(1 for group in intent.required_groups if any(term in normalized for term in group))
+        return score
+
+    def _paper_candidate(
+        self,
+        candidate: DocumentCandidate,
+        evidence_results: list[SearchResult],
+    ) -> PaperCandidate:
+        document = candidate.document
+        sorted_results = sorted(evidence_results, key=lambda item: item.score, reverse=True)
+        pages = sorted({item.chunk.page for item in sorted_results})
+        sections = sorted({item.chunk.section for item in sorted_results if item.chunk.section})
+        preview_source = ""
+        if sorted_results:
+            preview_source = sorted_results[0].chunk.text
+        else:
+            preview_source = document.metadata.abstract or document.metadata.title or document.filename
+        score = candidate.score + sum(item.score for item in sorted_results[:3]) * 0.05
+        return PaperCandidate(
+            document_id=document.document_id,
+            filename=document.filename,
+            pages=document.pages,
+            chunks=document.chunks,
+            metadata=paper_metadata(document.metadata),
+            score=round(float(score), 6),
+            evidence_count=len(evidence_results),
+            evidence_pages=pages[:8],
+            evidence_sections=sections[:8],
+            preview=self._shorten(preview_source, max_chars=260),
+        )
 
     def _document_matches_topic(
         self,
@@ -298,10 +444,7 @@ class LiteratureService:
             if core_groups:
                 mulberry_groups = [group for group in core_groups if "mulberry" in group]
                 if mulberry_groups:
-                    return any(
-                        any(term in text for term in group)
-                        for group in mulberry_groups
-                    ) and self._document_topic_score(document_id, results, intent) >= 2
+                    return all(any(term in text for term in group) for group in core_groups)
                 return all(any(term in text for term in group) for group in core_groups)
             matched_groups = sum(1 for group in intent.required_groups if any(term in text for term in group))
             return matched_groups >= max(1, min(2, len(intent.required_groups)))
@@ -393,14 +536,6 @@ class LiteratureService:
 
     def _normalize_topic_text(self, value: str) -> str:
         return " ".join(re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]{2,}", value.lower()))
-
-    def _filter_results_to_papers(
-        self,
-        results: list[SearchResult],
-        papers: list[PaperCandidate],
-    ) -> list[SearchResult]:
-        allowed_ids = {paper.document_id for paper in papers}
-        return [result for result in results if result.chunk.document_id in allowed_ids]
 
     def _shorten(self, text: str, max_chars: int) -> str:
         if len(text) <= max_chars:

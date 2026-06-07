@@ -714,6 +714,140 @@ def test_literature_topic_gate_rejects_method_similar_wrong_domain(monkeypatch, 
     assert all("biometric" not in source.text.lower() for source in response.sources)
 
 
+def test_literature_paper_recall_uses_metadata_when_section_filter_has_no_chunks(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    service = LiteratureService(store=store, answerer=Answerer())
+    mulberry = store.add_metadata_document(
+        "mulberry.metadata",
+        PaperMetadata(
+            title="Mulberry Leaf Disease Detection Using CNN-Based Smart Android Application",
+            abstract="This work detects mulberry leaf disease using convolutional neural networks.",
+            keywords=["mulberry", "leaf disease", "detection"],
+            metadata_source="openalex",
+        ),
+    )
+
+    response = service.search(
+        LiteratureRequest(
+            query="mulberry leaf disease detection",
+            focus="deep learning methods in existing literature",
+            top_k_documents=3,
+            evidence_k=6,
+            section_filter="methods",
+        )
+    )
+
+    assert [paper.document_id for paper in response.papers] == [mulberry.document_id]
+    assert response.sources
+    assert response.sources[0].section == "metadata"
+
+
+def test_literature_topic_gate_rejects_mulberry_but_not_leaf_disease(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    service = LiteratureService(store=store, answerer=Answerer())
+    disease = store.add_metadata_document(
+        "mulberry-disease.metadata",
+        PaperMetadata(
+            title="Explainable deep learning model for automatic mulberry leaf disease classification",
+            abstract="This paper studies automatic mulberry leaf disease classification with deep learning.",
+            keywords=["mulberry", "leaf disease", "classification"],
+            metadata_source="openalex",
+        ),
+    )
+    ripeness = store.add_metadata_document(
+        "mulberry-ripeness.metadata",
+        PaperMetadata(
+            title="Detection of Mulberry Ripeness Stages Using Deep Learning Models",
+            abstract="This paper detects mulberry fruit ripeness stages using deep learning.",
+            keywords=["mulberry", "ripeness", "detection"],
+            metadata_source="openalex",
+        ),
+    )
+
+    response = service.search(
+        LiteratureRequest(query="mulberry leaf disease detection", focus="deep learning methods", top_k_documents=5, evidence_k=10)
+    )
+
+    document_ids = [paper.document_id for paper in response.papers]
+    assert disease.document_id in document_ids
+    assert ripeness.document_id not in document_ids
+
+
+def test_literature_chinese_pest_disease_query_does_not_require_pest_only(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    service = LiteratureService(store=store, answerer=Answerer())
+    disease = store.add_metadata_document(
+        "mulberry-disease.metadata",
+        PaperMetadata(
+            title="Mulberry Leaf Disease Detection Using CNN-Based Smart Android Application",
+            abstract="This paper studies mulberry leaf disease detection using deep learning.",
+            keywords=["mulberry", "leaf disease", "detection"],
+            metadata_source="openalex",
+        ),
+    )
+    ripeness = store.add_metadata_document(
+        "mulberry-ripeness.metadata",
+        PaperMetadata(
+            title="Detection of Mulberry Ripeness Stages Using Deep Learning Models",
+            abstract="This paper detects mulberry fruit ripeness stages using deep learning.",
+            keywords=["mulberry", "ripeness", "detection"],
+            metadata_source="openalex",
+        ),
+    )
+
+    response = service.search(
+        LiteratureRequest(
+            query="\u6851\u6811\u75c5\u866b\u5bb3\u68c0\u6d4b",
+            focus="\u5df2\u6709\u6587\u732e\u4e2d\u7684\u6df1\u5ea6\u5b66\u4e60\u68c0\u6d4b\u65b9\u6cd5",
+            top_k_documents=5,
+            evidence_k=10,
+        )
+    )
+
+    document_ids = [paper.document_id for paper in response.papers]
+    assert disease.document_id in document_ids
+    assert ripeness.document_id not in document_ids
+
+
+def test_literature_search_deduplicates_paper_candidates(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    service = LiteratureService(store=store, answerer=Answerer())
+    title = "Explainable deep learning model for automatic mulberry leaf disease classification"
+    doi = "10.3389/fpls.2023.1175515"
+    first = store.add_metadata_document(
+        "mulberry-a.metadata",
+        PaperMetadata(
+            title=title,
+            doi=doi,
+            abstract="This paper studies automatic mulberry leaf disease classification with deep learning.",
+            keywords=["mulberry", "leaf disease", "classification"],
+            metadata_source="openalex",
+        ),
+    )
+    store.add_metadata_document(
+        "mulberry-b.metadata",
+        PaperMetadata(
+            title=title,
+            doi=doi,
+            abstract="This duplicate record studies automatic mulberry leaf disease classification.",
+            keywords=["mulberry", "leaf disease", "classification"],
+            metadata_source="openalex",
+        ),
+    )
+
+    response = service.search(
+        LiteratureRequest(query="mulberry leaf disease classification", top_k_documents=5, evidence_k=10)
+    )
+
+    matching = [paper for paper in response.papers if paper.metadata.title == title]
+    assert len(matching) == 1
+    assert matching[0].document_id == first.document_id
+
+
 def test_literature_methods_reports_insufficient_direct_papers(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
