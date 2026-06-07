@@ -5,8 +5,10 @@ import {
   BookOpen,
   Compass,
   DatabaseZap,
+  Download,
   FileSearch,
   FileText,
+  GitMerge,
   Layers,
   Library,
   Loader2,
@@ -25,11 +27,13 @@ import {
   DocumentFilters,
   DocumentSummary,
   enrichMetadata,
+  exportDocuments,
   getDocuments,
   importDiscoveredPaper,
   LiteratureReviewResponse,
   LiteratureRetrievalTrace,
   LiteratureSearchResponse,
+  mergeDuplicateDocuments,
   LiteratureEvaluationResponse,
   PaperCandidate,
   QueryResponse,
@@ -252,6 +256,46 @@ function App() {
     }
   }
 
+  async function handleMergeDuplicates() {
+    setBusy(true);
+    setError("");
+    setStatus("正在合并重复论文");
+    try {
+      const response = await mergeDuplicateDocuments();
+      setDocuments(response.documents);
+      setStatus(response.deleted_document_ids.length ? `已合并 ${response.deleted_document_ids.length} 条重复记录` : "没有发现需要合并的重复记录");
+    } catch (err) {
+      setError(String(err));
+      setStatus("合并重复失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleExportBibtex() {
+    setBusy(true);
+    setError("");
+    setStatus("正在导出 BibTeX");
+    try {
+      const exported = await exportDocuments("bibtex");
+      const blob = new Blob([exported.content], { type: "application/x-bibtex;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = exported.filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setStatus(`已导出 ${exported.document_count} 篇文献`);
+    } catch (err) {
+      setError(String(err));
+      setStatus("导出失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleRun() {
     setBusy(true);
     setError("");
@@ -348,6 +392,12 @@ function App() {
               <h2>后台论文库</h2>
               <span className="subtle-count">{documents.length} 篇</span>
               <div className="panel-actions">
+                <button className="icon-button" onClick={handleMergeDuplicates} disabled={busy} title="合并重复论文">
+                  <GitMerge size={17} />
+                </button>
+                <button className="icon-button" onClick={handleExportBibtex} disabled={busy} title="导出 BibTeX">
+                  <Download size={17} />
+                </button>
                 <button className="icon-button" onClick={handleEnrichMetadata} disabled={busy} title="用 Crossref / Semantic Scholar 刷新元数据">
                   <FileSearch size={17} />
                 </button>
@@ -714,11 +764,14 @@ function RetrievalTraceView({ trace }: { trace: LiteratureRetrievalTrace }) {
         </span>
       </div>
       {trace.planner_error && <div className="warning-box">{trace.planner_error}</div>}
+      {trace.reranker_error && <div className="warning-box">{trace.reranker_error}</div>}
       <div className="trace-stats">
         <span>候选 {trace.candidate_count}</span>
         <span>门控后 {trace.gated_count}</span>
         <span>返回 {trace.returned_count}</span>
+        <span>证据覆盖 {trace.evidence_coverage.toFixed(2)}</span>
         {trace.planner_model && <span>{trace.planner_model}</span>}
+        {trace.reranker_model && trace.reranker_model !== trace.planner_model && <span>{trace.reranker_model}</span>}
       </div>
       <div className="query-plan">
         <strong>实际检索式</strong>
@@ -902,6 +955,7 @@ function PaperList({ papers }: { papers: PaperCandidate[] }) {
               {paper.metadata.doi && <span>DOI {paper.metadata.doi}</span>}
               <span>{sourceLine(paper.metadata)}</span>
               {paper.metadata.duplicate_of && <em>疑似重复：{paper.metadata.duplicate_reason}</em>}
+              {paper.rerank_reason && <em>排序理由：{paper.rerank_reason}</em>}
               <p>{paper.metadata.abstract || paper.preview}</p>
               <small>{paper.filename}</small>
             </div>

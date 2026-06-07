@@ -430,6 +430,53 @@ def test_documents_endpoint_filters_library(monkeypatch, tmp_path: Path) -> None
     assert [item["document_id"] for item in duplicates.json()] == [duplicate.document_id]
 
 
+def test_documents_management_endpoints(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    main.store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    main.answerer = Answerer()
+    client = TestClient(main.app)
+    first = main.store.add_metadata_document(
+        "paper-a.metadata",
+        PaperMetadata(
+            title="Shared Duplicate Paper",
+            doi="10.1234/duplicate",
+            abstract="A duplicate test paper.",
+            metadata_source="openalex",
+        ),
+    )
+    duplicate = main.store.add_metadata_document(
+        "paper-b.metadata",
+        PaperMetadata(
+            title="Shared Duplicate Paper",
+            doi="10.1234/duplicate",
+            abstract="A duplicate test paper copy.",
+            metadata_source="openalex",
+        ),
+    )
+    extra = main.store.add_metadata_document(
+        "paper-c.metadata",
+        PaperMetadata(title="Exportable Paper", year=2024, metadata_source="crossref"),
+    )
+
+    export_response = client.get("/documents/export", params={"format": "bibtex"})
+    assert export_response.status_code == 200
+    exported = export_response.json()
+    assert exported["filename"].endswith(".bib")
+    assert "Shared Duplicate Paper" in exported["content"]
+
+    merge_response = client.post("/documents/merge-duplicates")
+    assert merge_response.status_code == 200
+    merged = merge_response.json()
+    assert duplicate.document_id in merged["deleted_document_ids"]
+    assert first.document_id in {document["document_id"] for document in merged["documents"]}
+
+    delete_response = client.post("/documents/delete", json={"document_ids": [extra.document_id]})
+    assert delete_response.status_code == 200
+    deleted = delete_response.json()
+    assert deleted["deleted_document_ids"] == [extra.document_id]
+    assert extra.document_id not in {document["document_id"] for document in deleted["documents"]}
+
+
 def test_crossref_enrichment_updates_metadata(tmp_path: Path) -> None:
     class FakeCrossrefClient:
         def fetch_by_doi(self, doi: str):
@@ -861,6 +908,95 @@ def test_literature_llm_query_parser_adds_exclusion_terms(monkeypatch, tmp_path:
     assert "deep learning" in response.retrieval_trace.exclude_terms
     assert [paper.document_id for paper in response.papers] == [disease.document_id]
     assert ripeness.metadata.title in response.retrieval_trace.excluded_titles
+
+
+def test_literature_llm_reranker_reorders_candidates(monkeypatch, tmp_path: Path) -> None:
+    class PlannerAndRerankerAnswerer:
+        client = object()
+        model = "fake-reranker-model"
+
+        def complete(self, prompt: str, system: str) -> str:
+            if "rankings" in prompt:
+                return (
+                    '{"rankings":['
+                    '{"document_id":"doc_b","relevance":0.95,"reason":"Directly about graph RAG."},'
+                    '{"document_id":"doc_a","relevance":0.2,"reason":"Only broadly about graphs."}'
+                    ']}'
+                )
+            return (
+                '{"query_rewrites":["graph retrieval augmented generation"],'
+                '"core_terms":["graph","retrieval augmented generation"],'
+                '"task_terms":["retrieval"],'
+                '"required_groups":[["graph"],["retrieval augmented generation"]],'
+                '"exclude_terms":[]}'
+            )
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    service = LiteratureService(store=store, answerer=PlannerAndRerankerAnswerer())
+    broad = store.add_metadata_document(
+        "broad.metadata",
+        PaperMetadata(
+            title="Graph Methods for General Search",
+            abstract="This paper mentions graph retrieval augmented generation briefly.",
+            keywords=["graph", "retrieval augmented generation"],
+        ),
+    )
+    direct = store.add_metadata_document(
+        "direct.metadata",
+        PaperMetadata(
+            title="Graph Retrieval Augmented Generation for Literature Review",
+            abstract="This paper directly studies graph retrieval augmented generation.",
+            keywords=["graph", "retrieval augmented generation"],
+        ),
+    )
+    broad.document_id = "doc_a"
+    direct.document_id = "doc_b"
+    store.documents = {"doc_a": broad, "doc_b": direct}
+    for chunk in store.chunks:
+        if "General Search" in chunk.text:
+            chunk.document_id = "doc_a"
+            chunk.chunk_id = "doc_a-metadata"
+        else:
+            chunk.document_id = "doc_b"
+            chunk.chunk_id = "doc_b-metadata"
+    store._rebuild_index()
+
+    response = service.search(
+        LiteratureRequest(query="graph retrieval augmented generation", top_k_documents=2, evidence_k=6)
+    )
+
+    assert response.retrieval_trace is not None
+    assert response.retrieval_trace.reranker == "llm_candidate_rerank"
+    assert [paper.document_id for paper in response.papers] == ["doc_b", "doc_a"]
+    assert response.papers[0].rerank_reason == "Directly about graph RAG."
+
+
+def test_literature_generation_blocks_low_evidence_coverage(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    store = RagStore(upload_dir=tmp_path / "uploads", index_dir=tmp_path / "index", retrieval_mode="tfidf")
+    service = LiteratureService(store=store, answerer=Answerer())
+    document = store.ingest_pdf(
+        "mulberry.pdf",
+        make_pdf_with_text("This methods section only discusses generic neural network optimization."),
+    )
+    document.metadata.title = "Mulberry Leaf Disease Detection Using Deep Learning"
+    document.metadata.abstract = "This metadata says the paper is about mulberry leaf disease detection."
+    document.metadata.keywords = ["mulberry", "leaf disease", "detection"]
+
+    response = service.methods(
+        LiteratureRequest(
+            query="mulberry leaf disease detection",
+            focus="deep learning methods",
+            top_k_documents=3,
+            evidence_k=6,
+            section_filter="methods",
+        )
+    )
+
+    assert response.answer_mode == "insufficient_evidence"
+    assert response.retrieval_trace is not None
+    assert response.retrieval_trace.evidence_coverage < 0.6
 
 
 def test_literature_search_deduplicates_paper_candidates(monkeypatch, tmp_path: Path) -> None:

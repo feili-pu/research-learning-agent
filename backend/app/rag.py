@@ -213,6 +213,46 @@ class RagStore:
         self._save_store()
         return self.list_documents()
 
+    def delete_documents(self, document_ids: list[str]) -> list[str]:
+        target_ids = {document_id for document_id in document_ids if document_id in self.documents}
+        if not target_ids:
+            return []
+
+        for document_id in target_ids:
+            document = self.documents.pop(document_id, None)
+            if document and document.pages > 0:
+                for pdf_path in self.upload_dir.glob(f"{document_id}-*.pdf"):
+                    pdf_path.unlink(missing_ok=True)
+
+        self.chunks = [chunk for chunk in self.chunks if chunk.document_id not in target_ids]
+        for document in self.documents.values():
+            if document.metadata.duplicate_of in target_ids:
+                document.metadata.duplicate_of = None
+                document.metadata.duplicate_reason = None
+
+        self._mark_duplicates()
+        self._save_store()
+        self._rebuild_index()
+        return sorted(target_ids)
+
+    def merge_duplicates(self) -> list[str]:
+        self._mark_duplicates()
+        duplicate_ids = [
+            document.document_id
+            for document in self.documents.values()
+            if document.metadata.duplicate_of
+        ]
+        return self.delete_documents(duplicate_ids)
+
+    def export_documents(self, export_format: str = "bibtex") -> str:
+        value = (export_format or "bibtex").strip().lower()
+        documents = sorted(self.documents.values(), key=lambda document: self._document_sort_key(document, "title"))
+        if value == "csv":
+            return self._export_csv(documents)
+        if value == "ris":
+            return self._export_ris(documents)
+        return self._export_bibtex(documents)
+
     def search(
         self,
         question: str,
@@ -763,6 +803,81 @@ class RagStore:
             f"URL: {metadata.external_url}" if metadata.external_url else None,
         ]
         return self._normalize_text("\n".join(part for part in parts if part))
+
+    def _export_bibtex(self, documents: list[Document]) -> str:
+        entries = []
+        for index, document in enumerate(documents, start=1):
+            metadata = document.metadata
+            key = self._bibtex_key(document, index)
+            fields = {
+                "title": metadata.title or document.filename,
+                "author": metadata.authors,
+                "year": str(metadata.year) if metadata.year else None,
+                "journal": metadata.venue,
+                "doi": metadata.doi,
+                "url": metadata.external_url,
+            }
+            lines = [f"@article{{{key},"]
+            for field, value in fields.items():
+                if value:
+                    escaped = str(value).replace("{", "").replace("}", "")
+                    lines.append(f"  {field} = {{{escaped}}},")
+            lines.append("}")
+            entries.append("\n".join(lines))
+        return "\n\n".join(entries)
+
+    def _export_ris(self, documents: list[Document]) -> str:
+        lines = []
+        for document in documents:
+            metadata = document.metadata
+            lines.append("TY  - JOUR")
+            lines.append(f"TI  - {metadata.title or document.filename}")
+            if metadata.authors:
+                for author in re.split(r"\s*,\s*|\s+;\s*", metadata.authors):
+                    if author.strip():
+                        lines.append(f"AU  - {author.strip()}")
+            if metadata.year:
+                lines.append(f"PY  - {metadata.year}")
+            if metadata.venue:
+                lines.append(f"JO  - {metadata.venue}")
+            if metadata.doi:
+                lines.append(f"DO  - {metadata.doi}")
+            if metadata.external_url:
+                lines.append(f"UR  - {metadata.external_url}")
+            lines.append("ER  -")
+        return "\n".join(lines)
+
+    def _export_csv(self, documents: list[Document]) -> str:
+        import csv
+        import io
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["title", "authors", "year", "venue", "doi", "source", "url", "filename"])
+        for document in documents:
+            metadata = document.metadata
+            writer.writerow(
+                [
+                    metadata.title or "",
+                    metadata.authors or "",
+                    metadata.year or "",
+                    metadata.venue or "",
+                    metadata.doi or "",
+                    metadata.metadata_source or "",
+                    metadata.external_url or "",
+                    document.filename,
+                ]
+            )
+        return output.getvalue()
+
+    def _bibtex_key(self, document: Document, index: int) -> str:
+        metadata = document.metadata
+        author = (metadata.authors or "paper").split(",")[0].split()[0]
+        year = str(metadata.year or "nd")
+        title = metadata.title or document.filename
+        title_word = next((word for word in re.findall(r"[A-Za-z0-9]+", title) if len(word) > 2), "study")
+        key = re.sub(r"[^A-Za-z0-9]+", "", f"{author}{year}{title_word}")
+        return key or f"paper{index}"
 
     def _ensure_metadata_chunks(self) -> None:
         chunked_document_ids = {chunk.document_id for chunk in self.chunks}

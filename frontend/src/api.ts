@@ -73,6 +73,7 @@ export type PaperCandidate = {
   evidence_pages: number[];
   evidence_sections: string[];
   preview: string;
+  rerank_reason: string | null;
 };
 
 export type LiteratureRetrievalTrace = {
@@ -85,6 +86,9 @@ export type LiteratureRetrievalTrace = {
   relevance_terms: string[];
   exclude_terms: string[];
   reranker: string;
+  reranker_model: string | null;
+  reranker_error: string | null;
+  evidence_coverage: number;
   candidate_count: number;
   gated_count: number;
   returned_count: number;
@@ -179,6 +183,18 @@ export type DiscoveryImportResponse = {
   duplicate: boolean;
 };
 
+export type DocumentBulkResponse = {
+  deleted_document_ids: string[];
+  documents: DocumentSummary[];
+};
+
+export type DocumentExportResponse = {
+  format: string;
+  filename: string;
+  content: string;
+  document_count: number;
+};
+
 const API_BASE = "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -207,6 +223,22 @@ export function reindexDocuments() {
 
 export function enrichMetadata() {
   return request<DocumentSummary[]>("/documents/enrich-metadata", { method: "POST" });
+}
+
+export function mergeDuplicateDocuments() {
+  return request<DocumentBulkResponse>("/documents/merge-duplicates", { method: "POST" });
+}
+
+export function deleteDocuments(documentIds: string[]) {
+  return request<DocumentBulkResponse>("/documents/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ document_ids: documentIds })
+  });
+}
+
+export function exportDocuments(format: "bibtex" | "ris" | "csv" = "bibtex") {
+  return request<DocumentExportResponse>(`/documents/export?format=${format}`);
 }
 
 export function uploadDocument(file: File) {

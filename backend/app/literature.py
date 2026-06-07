@@ -35,6 +35,7 @@ class DocumentCandidate:
     results: list[SearchResult]
     score: float
     topic_score: int
+    rerank_reason: str | None = None
 
 
 class LiteratureService:
@@ -126,6 +127,23 @@ class LiteratureService:
                 papers=[],
                 sources=[],
             )
+        if self._requires_evidence_guard(trace) and trace.evidence_coverage < 0.6:
+            return LiteratureReviewResponse(
+                task=task,
+                query=request.query,
+                retrieval_mode=self.store.active_retrieval_mode,
+                answer_mode="insufficient_evidence",
+                model=None,
+                answer=(
+                    "已找到一些候选论文，但证据没有覆盖该研究方向的核心主题。"
+                    f"当前证据覆盖率为 {trace.evidence_coverage:.2f}。"
+                    "为避免把其他领域论文迁移成该方向已有文献，我没有生成综述。"
+                    "建议先导入更多直接相关论文或放宽/修正研究方向后再试。"
+                ),
+                retrieval_trace=trace,
+                papers=papers,
+                sources=source_chunks(filtered_results),
+            )
         answer = self.answerer.answer(prompt, filtered_results)
         return LiteratureReviewResponse(
             task=task,
@@ -157,6 +175,7 @@ class LiteratureService:
             if self._document_matches_topic(candidate.document.document_id, candidate.results, intent)
         ]
         candidates = self._dedupe_document_candidates(gated_candidates)
+        candidates, reranker, reranker_error = self._rerank_document_candidates(candidates, intent, request)
         candidates = candidates[: request.top_k_documents]
         evidence_by_document = self._extract_evidence(candidates, intent, request)
         papers = [
@@ -167,6 +186,7 @@ class LiteratureService:
         for paper in papers:
             filtered_results.extend(evidence_by_document.get(paper.document_id, []))
         excluded_titles = self._excluded_candidate_titles(recalled_candidates, gated_candidates)
+        evidence_coverage = self._evidence_coverage(intent, filtered_results)
         trace = LiteratureRetrievalTrace(
             query_planner=intent.planner,
             planner_model=intent.planner_model,
@@ -176,6 +196,10 @@ class LiteratureService:
             required_groups=intent.required_groups,
             relevance_terms=intent.relevance_terms,
             exclude_terms=intent.exclude_terms,
+            reranker=reranker,
+            reranker_model=getattr(self.answerer, "model", None) if reranker.startswith("llm") else None,
+            reranker_error=reranker_error,
+            evidence_coverage=evidence_coverage,
             candidate_count=len(recalled_candidates),
             gated_count=len(gated_candidates),
             returned_count=len(papers),
@@ -355,6 +379,9 @@ class LiteratureService:
     def _query_planner_timeout(self) -> float:
         return float(os.getenv("RLA_QUERY_PLANNER_TIMEOUT", "45"))
 
+    def _reranker_timeout(self) -> float:
+        return float(os.getenv("RLA_RERANKER_TIMEOUT", "45"))
+
     def _parse_json_object(self, value: str) -> dict:
         text = value.strip()
         if text.startswith("```"):
@@ -463,6 +490,99 @@ class LiteratureService:
         if candidate_is_duplicate != existing_is_duplicate:
             return not candidate_is_duplicate
         return candidate.score > existing.score
+
+    def _rerank_document_candidates(
+        self,
+        candidates: list[DocumentCandidate],
+        intent: QueryIntent,
+        request: LiteratureRequest,
+    ) -> tuple[list[DocumentCandidate], str, str | None]:
+        if len(candidates) <= 1:
+            return candidates, "local_topic_metadata_rerank", None
+        if getattr(self.answerer, "client", None) is None:
+            return candidates, "local_topic_metadata_rerank", None
+
+        executor = ThreadPoolExecutor(max_workers=1)
+        try:
+            future = executor.submit(self._call_reranker_llm, candidates[:20], intent, request)
+            payload = future.result(timeout=self._reranker_timeout())
+        except FuturesTimeoutError:
+            return candidates, "local_topic_metadata_rerank", "LLM reranker timed out; fell back to local ranking."
+        except Exception as exc:
+            return candidates, "local_topic_metadata_rerank", f"LLM reranker failed: {type(exc).__name__}"
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+        score_map = {}
+        reason_map = {}
+        for item in payload.get("rankings", []):
+            if not isinstance(item, dict):
+                continue
+            document_id = str(item.get("document_id", ""))
+            if not document_id:
+                continue
+            try:
+                relevance = float(item.get("relevance", 0.0))
+            except (TypeError, ValueError):
+                relevance = 0.0
+            score_map[document_id] = max(0.0, min(1.0, relevance))
+            reason_map[document_id] = self._shorten(str(item.get("reason", "")).strip(), 180) or None
+
+        if not score_map:
+            return candidates, "local_topic_metadata_rerank", "LLM reranker returned no usable rankings."
+
+        reranked = []
+        for candidate in candidates:
+            relevance = score_map.get(candidate.document.document_id, 0.0)
+            reason = reason_map.get(candidate.document.document_id)
+            reranked.append(
+                DocumentCandidate(
+                    document=candidate.document,
+                    results=candidate.results,
+                    score=candidate.score + relevance * 4.0,
+                    topic_score=candidate.topic_score,
+                    rerank_reason=reason,
+                )
+            )
+        return sorted(reranked, key=lambda item: item.score, reverse=True), "llm_candidate_rerank", None
+
+    def _call_reranker_llm(
+        self,
+        candidates: list[DocumentCandidate],
+        intent: QueryIntent,
+        request: LiteratureRequest,
+    ) -> dict:
+        papers = []
+        for candidate in candidates:
+            metadata = candidate.document.metadata
+            papers.append(
+                {
+                    "document_id": candidate.document.document_id,
+                    "title": metadata.title or candidate.document.filename,
+                    "abstract": self._shorten(metadata.abstract or "", 700),
+                    "keywords": metadata.keywords[:12],
+                    "fields_of_study": metadata.fields_of_study[:8],
+                    "local_score": round(candidate.score, 4),
+                }
+            )
+        prompt = (
+            "你是论文相关性 reranker。请根据用户研究方向判断候选论文是否是该方向的已有文献，"
+            "不要把其他领域的相似方法当作相关论文。输出严格 JSON，不要 Markdown。\n"
+            "JSON 字段：rankings；每项包含 document_id, relevance(0到1), reason。\n\n"
+            f"研究方向：{request.query}\n"
+            f"关注重点：{request.focus or ''}\n"
+            f"必需主题组：{intent.required_groups}\n"
+            f"排除主题：{intent.exclude_terms}\n"
+            f"候选论文：{json.dumps(papers, ensure_ascii=False)}"
+        )
+        output = self.answerer.complete(
+            prompt,
+            system=(
+                "You are a strict paper relevance reranker. "
+                "Return one valid JSON object only. Do not summarize papers."
+            ),
+        )
+        return self._parse_json_object(output)
 
     def _document_recall_score(
         self,
@@ -591,6 +711,7 @@ class LiteratureService:
             evidence_pages=pages[:8],
             evidence_sections=sections[:8],
             preview=self._shorten(preview_source, max_chars=260),
+            rerank_reason=candidate.rerank_reason,
         )
 
     def _document_matches_topic(
@@ -718,6 +839,28 @@ class LiteratureService:
             if title not in titles:
                 titles.append(title)
         return titles
+
+    def _evidence_coverage(self, intent: QueryIntent, results: list[SearchResult]) -> float:
+        if not results:
+            return 0.0
+        text = self._normalize_topic_text(" ".join(result.chunk.text for result in results))
+        core_groups = [group for group in intent.required_groups if not self._is_generic_task_group(group)]
+        if core_groups:
+            matched = sum(1 for group in core_groups if any(term in text for term in group))
+            return round(matched / len(core_groups), 4)
+        important_terms = intent.relevance_terms[:8]
+        if not important_terms:
+            return 1.0
+        matched_terms = sum(1 for term in important_terms if term in text)
+        return round(matched_terms / len(important_terms), 4)
+
+    def _requires_evidence_guard(self, trace: LiteratureRetrievalTrace) -> bool:
+        core_groups = [
+            group
+            for group in trace.required_groups
+            if not self._is_generic_task_group(group)
+        ]
+        return bool(core_groups)
 
     def _shorten(self, text: str, max_chars: int) -> str:
         if len(text) <= max_chars:

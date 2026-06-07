@@ -15,6 +15,9 @@ from .schemas import (
     DiscoveryImportResponse,
     DiscoveryRequest,
     DiscoveryResponse,
+    DocumentBulkResponse,
+    DocumentDeleteRequest,
+    DocumentExportResponse,
     DocumentIngestResponse,
     DocumentSummary,
     LiteratureEvaluationRequest,
@@ -166,6 +169,41 @@ def enrich_document_metadata() -> list[DocumentSummary]:
         document_summary(document)
         for document in get_store().enrich_metadata(CrossrefClient(), SemanticScholarClient())
     ]
+
+
+@app.post("/documents/delete", response_model=DocumentBulkResponse)
+def delete_documents(request: DocumentDeleteRequest) -> DocumentBulkResponse:
+    current_store = get_store()
+    deleted_ids = current_store.delete_documents(request.document_ids)
+    return DocumentBulkResponse(
+        deleted_document_ids=deleted_ids,
+        documents=[document_summary(document) for document in current_store.list_documents()],
+    )
+
+
+@app.post("/documents/merge-duplicates", response_model=DocumentBulkResponse)
+def merge_duplicate_documents() -> DocumentBulkResponse:
+    current_store = get_store()
+    deleted_ids = current_store.merge_duplicates()
+    return DocumentBulkResponse(
+        deleted_document_ids=deleted_ids,
+        documents=[document_summary(document) for document in current_store.list_documents()],
+    )
+
+
+@app.get("/documents/export", response_model=DocumentExportResponse)
+def export_documents(format: str = "bibtex") -> DocumentExportResponse:
+    normalized = (format or "bibtex").strip().lower()
+    if normalized not in {"bibtex", "ris", "csv"}:
+        raise HTTPException(status_code=400, detail="format must be one of bibtex, ris, or csv")
+    content = get_store().export_documents(normalized)
+    extension = "bib" if normalized == "bibtex" else normalized
+    return DocumentExportResponse(
+        format=normalized,
+        filename=f"scholarscope-library.{extension}",
+        content=content,
+        document_count=len(get_store().list_documents()),
+    )
 
 
 @app.post("/query", response_model=QueryResponse)

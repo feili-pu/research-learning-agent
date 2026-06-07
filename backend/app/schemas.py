@@ -63,6 +63,22 @@ class DocumentSummary(BaseModel):
     metadata: "PaperMetadata"
 
 
+class DocumentDeleteRequest(BaseModel):
+    document_ids: list[str] = Field(min_length=1)
+
+
+class DocumentBulkResponse(BaseModel):
+    deleted_document_ids: list[str] = Field(default_factory=list)
+    documents: list[DocumentSummary]
+
+
+class DocumentExportResponse(BaseModel):
+    format: str
+    filename: str
+    content: str
+    document_count: int
+
+
 class StudyRequest(BaseModel):
     topic: str = Field(default="这些文档", min_length=1)
     focus: str | None = None
@@ -99,6 +115,7 @@ class PaperCandidate(BaseModel):
     evidence_pages: list[int]
     evidence_sections: list[str] = Field(default_factory=list)
     preview: str
+    rerank_reason: str | None = None
 
 
 class LiteratureRetrievalTrace(BaseModel):
@@ -111,6 +128,9 @@ class LiteratureRetrievalTrace(BaseModel):
     relevance_terms: list[str] = Field(default_factory=list)
     exclude_terms: list[str] = Field(default_factory=list)
     reranker: str = "local_topic_metadata_rerank"
+    reranker_model: str | None = None
+    reranker_error: str | None = None
+    evidence_coverage: float = 0.0
     candidate_count: int = 0
     gated_count: int = 0
     returned_count: int = 0
