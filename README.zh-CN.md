@@ -364,6 +364,22 @@ POST /discovery/import-metadata
 
 前端现在也会展示当前模式的提示词或检索意图，方便用户检查每个工作流到底在要求系统做什么。
 
+### V16：工程化启动和质量门禁
+
+V16 增加了本地工程化能力：
+
+```text
+scripts/check-env.ps1
+scripts/start.ps1
+scripts/stop.ps1
+ci/github-actions-ci.yml
+CHANGELOG.md
+```
+
+现在可以一键检查环境、启动前后端、停止本地服务，并提供 GitHub Actions CI 模板用于后端测试和前端构建。版本号更新为 `0.16.0`。
+
+如果需要启用 GitHub Actions，把 `ci/github-actions-ci.yml` 复制到 `.github/workflows/ci.yml`，并用具有 `workflow` 权限的 GitHub 凭据推送。
+
 ## 项目结构
 
 ```text
@@ -407,6 +423,40 @@ $env:RLA_OPENAI_WIRE_API="responses"
 ```
 
 也可以把这些配置写入本地 `.env` 文件。`.env` 已经被 Git 忽略，不应该提交真实 API key。
+
+## 推荐启动方式
+
+先做环境自检：
+
+```powershell
+.\scripts\check-env.ps1
+```
+
+一键启动前后端：
+
+```powershell
+.\scripts\start.ps1
+```
+
+启动后会打开：
+
+```text
+http://127.0.0.1:5173
+```
+
+停止本地前后端端口：
+
+```powershell
+.\scripts\stop.ps1
+```
+
+如果喜欢双击运行，也可以使用：
+
+```text
+scripts\check-env.cmd
+scripts\start.cmd
+scripts\stop.cmd
+```
 
 ## 启动后端
 

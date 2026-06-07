@@ -402,6 +402,42 @@ For local development, you can also copy `.env.example` to `.env` and fill in yo
 
 Never commit your real API key. Keep it in your shell environment or local `.env` file only.
 
+## Recommended Local Startup
+
+Check the local environment:
+
+```powershell
+.\scripts\check-env.ps1
+```
+
+Start both the FastAPI backend and Vite frontend:
+
+```powershell
+.\scripts\start.ps1
+```
+
+The app opens at:
+
+```text
+http://127.0.0.1:5173
+```
+
+Stop local frontend/backend port processes:
+
+```powershell
+.\scripts\stop.ps1
+```
+
+Windows `.cmd` wrappers are also available:
+
+```text
+scripts\check-env.cmd
+scripts\start.cmd
+scripts\stop.cmd
+```
+
+A GitHub Actions template is available at `ci/github-actions-ci.yml`. To enable it, copy it to `.github/workflows/ci.yml` and push with a GitHub credential that has `workflow` scope.
+
 ## Run The API
 
 Use the `graph-rag` conda environment if it is available on this machine.

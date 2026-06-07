@@ -35,7 +35,7 @@ from .study import StudyService
 app = FastAPI(
     title="ScholarScope",
     description="Local RAG API for learning from uploaded PDFs.",
-    version="0.15.0",
+    version="0.16.0",
 )
 
 store: RagStore | None = None

@@ -49,6 +49,7 @@ import "./styles.css";
 
 type Mode = "discovery" | "direction-review" | "method-map" | "detail-briefing" | "paper-compare" | "paper-search" | "evaluation" | "query";
 type AppResult = QueryResponse | LiteratureReviewResponse | LiteratureSearchResponse | LiteratureEvaluationResponse | DiscoveryResponse | null;
+const APP_VERSION = "0.16.0";
 
 const sectionOptions = [
   { value: "", label: "全部章节" },
@@ -103,8 +104,8 @@ const modePromptInstructions: Record<Mode, string> = {
   "method-map": "请专注梳理这个研究方向中的方法体系。输出应包含：方法类别、每类方法解决的问题、关键技术细节、优点、局限、对应论文来源。如果证据不足，请明确指出缺少哪些方法细节。",
   "detail-briefing": "请围绕用户关注点做细节梳理，适合研究生做开题或复现前阅读。输出应包含：关键定义、实验/数据线索、模型或算法细节、重要结论、可复现切入点。",
   "paper-compare": "请对检索到的代表论文做横向对比，帮助用户判断哪些论文值得优先阅读或复现。输出应包含：对比维度表、每篇论文的核心问题、方法差异、实验/数据线索、优点、局限、适合继续研究的切入点。如果某个维度证据不足，请写明缺少证据，不要补编。",
-  "paper-search": "相关论文模式不调用 LLM。系统会用研究方向和关注重点检索本地论文库，把相关证据块按 document_id 聚合成论文候选并排序。",
-  evaluation: "检索评估模式不调用 LLM。系统会运行内置评估集，检查检索证据是否覆盖预期关键词，并输出命中词、缺失词和分数。",
+  "paper-search": "相关论文模式会优先用 LLM 解析查询和二次重排；如果 LLM 不可用，会回退到本地规则检索。系统会先召回论文候选，再抽取证据片段。",
+  evaluation: "检索评估模式会运行内置评估集，检查检索证据是否覆盖预期关键词，并输出命中词、污染词、缺失词和分数。",
   query: "你是一个研究学习助手。只能依据提供的来源回答；如果来源不足，要说明缺少什么；回答中使用 [1]、[2] 这样的编号引用来源。"
 };
 
@@ -370,6 +371,7 @@ function App() {
           <div className="brand-line">
             <Microscope size={22} />
             <span>ScholarScope</span>
+            <span>v{APP_VERSION}</span>
           </div>
           <h1>文献罗盘</h1>
         </div>
